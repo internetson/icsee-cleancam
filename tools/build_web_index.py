@@ -1,0 +1,1820 @@
+# -*- coding: utf-8 -*-
+import os
+
+html_content = '''<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CleanCam OS • Автономное управление</title>
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --panel-bg: #151d30;
+            --panel-border: #222f4c;
+            --accent: #38bdf8;
+            --accent-hover: #0ea5e9;
+            --text: #f1f5f9;
+            --text-muted: #94a3b8;
+            --btn-active: #2563eb;
+            --danger: #ef4444;
+            --success: #10b981;
+            --warning: #f59e0b;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        body { background: var(--bg-color); color: var(--text); padding: 16px; display: flex; justify-content: center; }
+        .container { width: 100%; max-width: 1280px; display: flex; flex-direction: column; gap: 18px; }
+
+        /* Header */
+        header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 14px; border-bottom: 1px solid var(--panel-border); flex-wrap: wrap; gap: 12px; }
+        .logo-area { display: flex; align-items: center; gap: 10px; }
+        .logo-icon { width: 38px; height: 38px; background: linear-gradient(135deg, #38bdf8, #2563eb); border-radius: 9px; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 1.15rem; color: #fff; box-shadow: 0 4px 12px rgba(56, 189, 248, 0.35); }
+        h1 { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; }
+
+        .header-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .status-badge { display: flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; border: 1px solid transparent; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+        .status-badge.ap { background: rgba(245, 158, 11, 0.15); border-color: rgba(245, 158, 11, 0.4); color: #fbbf24; }
+        .status-badge.ap .status-dot { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
+        .status-badge.client { background: rgba(16, 185, 129, 0.15); border-color: rgba(16, 185, 129, 0.4); color: #34d399; }
+        .status-badge.client .status-dot { background: #10b981; box-shadow: 0 0 8px #10b981; }
+
+        .auth-bar { display: flex; align-items: center; gap: 8px; }
+        .user-pill { background: #1e293b; border: 1px solid var(--panel-border); padding: 5px 10px; border-radius: 8px; font-size: 0.8rem; display: flex; align-items: center; gap: 6px; }
+        .btn-header { background: #1c263d; border: 1px solid #283756; color: var(--text); padding: 5px 10px; border-radius: 8px; font-size: 0.8rem; cursor: pointer; transition: all 0.2s; }
+        .btn-header:hover { background: var(--panel-border); border-color: var(--accent); color: var(--accent); }
+        .btn-header.danger:hover { border-color: var(--danger); color: var(--danger); }
+
+        /* Navigation Tabs */
+        .nav-tabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; border-bottom: 1px solid var(--panel-border); scrollbar-width: thin; }
+        .tab-btn { background: #151d30; border: 1px solid var(--panel-border); color: var(--text-muted); padding: 9px 15px; border-radius: 8px; font-size: 0.85rem; font-weight: 600; cursor: pointer; white-space: nowrap; transition: all 0.2s; }
+        .tab-btn:hover { color: #fff; background: #1c263d; border-color: #334155; }
+        .tab-btn.active { color: #fff; background: #2563eb; border-color: #2563eb; box-shadow: 0 -2px 10px rgba(37, 99, 235, 0.4); }
+
+        .tab-content { display: none; }
+        .tab-content.active { display: flex; flex-direction: column; gap: 18px; }
+
+        /* Responsive Layout for Settings Tabs */
+        .tab-layout { display: grid; grid-template-columns: 1fr; gap: 18px; align-items: start; }
+        @media (min-width: 1024px) {
+            .tab-layout { grid-template-columns: 1fr 390px; }
+            .tab-side-preview { position: sticky; top: 16px; }
+        }
+        .tab-main-col { display: flex; flex-direction: column; gap: 18px; }
+
+        .grid { display: grid; grid-template-columns: 1fr; gap: 18px; }
+        @media (min-width: 960px) { .grid { grid-template-columns: 1fr 1fr; } }
+        .grid-3 { display: grid; grid-template-columns: 1fr; gap: 14px; }
+        @media (min-width: 768px) { .grid-3 { grid-template-columns: 1fr 1fr 1fr; } }
+
+        .card { background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.25); }
+        .card-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1f2a44; padding-bottom: 10px; }
+        .card-title { font-size: 1.02rem; font-weight: 600; color: #f8fafc; display: flex; align-items: center; gap: 8px; }
+
+        /* Video Section */
+        .video-container { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; overflow: hidden; border: 1px solid #1e293b; }
+        .live-video-elem { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+        .video-overlay-ctrls { position: absolute; inset: 0; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 10px; }
+        .video-top-bar { display: flex; justify-content: space-between; align-items: center; pointer-events: auto; }
+        .video-badge { background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); padding: 4px 8px; border-radius: 6px; font-size: 0.74rem; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+        .rec-dot { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; animation: blink 1.5s infinite; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+        .video-bottom-bar { display: flex; justify-content: space-between; align-items: center; pointer-events: auto; }
+        .video-action-btn { background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(4px); border: 1px solid rgba(255,255,255,0.2); color: #fff; padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; cursor: pointer; transition: all 0.2s; }
+        .video-action-btn:hover { background: var(--accent); color: #000; border-color: var(--accent); }
+
+        .ptz-overlay-grid { position: absolute; inset: 18% 28%; pointer-events: auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; opacity: 0; transition: opacity 0.25s; }
+        .video-container:hover .ptz-overlay-grid { opacity: 0.85; }
+        .ptz-overlay-btn { background: rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.2); color: #fff; font-size: 1.1rem; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(2px); transition: all 0.15s; }
+        .ptz-overlay-btn:hover { background: rgba(56, 189, 248, 0.6); transform: scale(1.05); }
+        .ptz-overlay-btn:active, .ptz-overlay-btn.active-key { background: var(--btn-active) !important; color: #fff !important; transform: scale(1.1); box-shadow: 0 0 12px var(--accent); }
+        .video-container.fullscreen { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 10000; border-radius: 0; }
+
+        /* PTZ Pad Controls */
+        .ptz-wrapper { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+        .ptz-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; width: 100%; max-width: 250px; }
+        .ptz-btn { background: #1c263d; border: 1px solid #283756; border-radius: 10px; color: var(--text); padding: 13px; font-size: 1.1rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+        .ptz-btn:hover { background: #283756; border-color: var(--accent); }
+        .ptz-btn:active, .ptz-btn.active-key { background: var(--accent) !important; color: #000 !important; transform: scale(0.95); box-shadow: 0 0 14px var(--accent); }
+        .ptz-stop { background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.4); color: #f87171; font-weight: 700; font-size: 0.85rem; }
+
+        /* Mini-Preview Card for Settings Tabs */
+        .mini-preview-card { background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
+        .mini-video-box { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 8px; overflow: hidden; border: 1px solid #1e293b; }
+        .mini-ptz-bar { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+        .mini-ptz-btn { background: #1c263d; border: 1px solid #283756; border-radius: 6px; color: var(--text); padding: 8px 4px; font-size: 0.85rem; font-weight: 600; cursor: pointer; text-align: center; transition: all 0.15s; }
+        .mini-ptz-btn:hover { background: #283756; border-color: var(--accent); }
+        .mini-ptz-btn:active, .mini-ptz-btn.active-key { background: var(--accent) !important; color: #000 !important; }
+        .mini-ptz-btn.stop { color: #f87171; border-color: rgba(239, 68, 68, 0.4); }
+
+        /* Keyboard Hints */
+        .kbd-badge { background: #1e293b; border: 1px solid #334155; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 0.72rem; color: #7dd3fc; }
+
+        /* Presets Grid (8 Slots) */
+        .preset-grid-8 { display: grid; grid-template-columns: 1fr; gap: 8px; }
+        @media (min-width: 640px) { .preset-grid-8 { grid-template-columns: 1fr 1fr; } }
+        .preset-slot { background: #0b0f19; border: 1px solid #222f4c; border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; transition: border-color 0.2s; }
+        .preset-slot:hover { border-color: #3b82f6; }
+        .preset-slot-header { display: flex; justify-content: space-between; align-items: center; }
+        .preset-title-row { display: flex; align-items: center; gap: 6px; width: 65%; }
+        .preset-num-tag { background: #1e293b; color: var(--accent); font-size: 0.74rem; font-weight: 700; padding: 2px 5px; border-radius: 4px; }
+        .preset-name-input { background: transparent; border: 1px dashed transparent; color: var(--text); font-size: 0.82rem; font-weight: 600; padding: 2px 4px; border-radius: 4px; width: 100%; }
+        .preset-name-input:hover, .preset-name-input:focus { border-color: #3b82f6; background: #151d30; outline: none; }
+        .preset-coords-badge { font-size: 0.7rem; color: var(--text-muted); font-family: monospace; }
+        .preset-actions { display: flex; gap: 6px; justify-content: flex-end; }
+        .preset-btn-go { background: #1e3a8a; border: 1px solid #2563eb; color: #bfdbfe; padding: 4px 8px; border-radius: 6px; font-size: 0.74rem; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        .preset-btn-go:hover { background: #2563eb; color: #fff; }
+        .preset-btn-save { background: #1c263d; border: 1px solid #334155; color: #fbbf24; padding: 4px 8px; border-radius: 6px; font-size: 0.74rem; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        .preset-btn-save:hover { background: #374151; border-color: #fbbf24; }
+
+        /* OSD Interactive Visual Markers */
+        .osd-interactive-layer { position: absolute; inset: 0; pointer-events: none; }
+        .osd-marker-tag { position: absolute; pointer-events: auto; padding: 3px 8px; border-radius: 5px; font-size: 0.72rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.6); transition: all 0.2s; }
+        .osd-marker-tag.time { background: #0284c7; color: #fff; border: 1px solid #38bdf8; }
+        .osd-marker-tag.title { background: #059669; color: #fff; border: 1px solid #34d399; }
+        .osd-marker-tag:hover { transform: scale(1.08); filter: brightness(1.2); }
+        .pos-TopLeft { top: 8px; left: 8px; }
+        .pos-TopRight { top: 8px; right: 8px; }
+        .pos-BottomLeft { bottom: 8px; left: 8px; }
+        .pos-BottomRight { bottom: 8px; right: 8px; }
+
+        /* Forms, Sliders, Checkboxes */
+        .form-group { display: flex; flex-direction: column; gap: 5px; }
+        .form-label { font-size: 0.8rem; color: var(--text-muted); display: flex; justify-content: space-between; }
+        .form-input, .form-select { width: 100%; background: #0b0f19; border: 1px solid #222f4c; border-radius: 8px; padding: 8px 12px; color: var(--text); font-size: 0.85rem; outline: none; }
+        .form-input:focus, .form-select:focus { border-color: var(--accent); }
+
+        .slider-row { width: 100%; display: flex; flex-direction: column; gap: 4px; }
+        .slider-header { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-muted); }
+        input[type="range"] { width: 100%; accent-color: var(--accent); cursor: pointer; }
+
+        .checkbox-label { display: flex; align-items: center; gap: 8px; font-size: 0.84rem; cursor: pointer; }
+        .checkbox-label input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+
+        .btn-apply { background: linear-gradient(135deg, #0284c7, #2563eb); border: none; color: #fff; padding: 11px 18px; border-radius: 8px; font-weight: 600; font-size: 0.88rem; cursor: pointer; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35); transition: all 0.2s; }
+        .btn-apply:hover { filter: brightness(1.1); transform: translateY(-1px); }
+        .btn-apply:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        .btn-scan { background: #1e293b; border: 1px solid #334155; color: var(--accent); padding: 6px 12px; border-radius: 8px; font-size: 0.8rem; cursor: pointer; }
+        .btn-scan:hover { background: #28354b; border-color: var(--accent); }
+
+        .wifi-list { display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow-y: auto; }
+        .wifi-item { background: #0e1526; border: 1px solid #1c263d; border-radius: 8px; padding: 8px 10px; font-size: 0.82rem; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: all 0.2s; }
+        .wifi-item:hover, .wifi-item.selected { border-color: var(--accent); background: rgba(56, 189, 248, 0.1); }
+
+        .stream-row { display: flex; flex-direction: column; gap: 8px; }
+        .url-box { background: #0b0f19; border: 1px solid #222f4c; border-radius: 7px; padding: 8px 10px; font-family: monospace; font-size: 0.78rem; color: #7dd3fc; display: flex; justify-content: space-between; align-items: center; word-break: break-all; }
+        .copy-btn { background: #1c263d; border: 1px solid #283756; color: var(--text); padding: 4px 8px; border-radius: 6px; font-size: 0.72rem; cursor: pointer; white-space: nowrap; margin-left: 8px; }
+        .copy-btn:hover { background: var(--accent); color: #000; }
+
+        .notice-box { background: rgba(56, 189, 248, 0.08); border-left: 3px solid var(--accent); padding: 8px 10px; border-radius: 0 7px 7px 0; font-size: 0.78rem; line-height: 1.4; color: #bae6fd; }
+
+        /* Modal Overlays */
+        .modal-backdrop { position: fixed; inset: 0; background: rgba(11, 15, 25, 0.85); backdrop-filter: blur(8px); display: none; align-items: center; justify-content: center; z-index: 20000; padding: 16px; }
+        .modal-card { background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 14px; width: 100%; max-width: 420px; padding: 24px; display: flex; flex-direction: column; gap: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.6); }
+        .modal-title { font-size: 1.2rem; font-weight: 700; color: #fff; }
+        .modal-desc { font-size: 0.82rem; color: var(--text-muted); }
+
+        .toast { position: fixed; bottom: 20px; right: 20px; background: #1e293b; border: 1px solid #334155; padding: 12px 18px; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); font-size: 0.86rem; display: none; z-index: 30000; animation: slideUp 0.3s; }
+        .toast.success { border-color: var(--success); color: #34d399; }
+        .toast.error { border-color: var(--danger); color: #f87171; }
+        .toast.warning { border-color: var(--warning); color: #fbbf24; }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    </style>
+</head>
+<body>
+    <!-- Login Modal -->
+    <div id="login-modal" class="modal-backdrop" style="display: flex;">
+        <div class="modal-card">
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <div class="logo-icon">CC</div>
+                <div>
+                    <h2 class="modal-title">Вход в CleanCam OS</h2>
+                    <p class="modal-desc">Автономная панель управления камерой</p>
+                </div>
+            </div>
+            <div class="notice-box">
+                По умолчанию: логин <strong>admin</strong>, пароль <strong>admin</strong>.
+            </div>
+            <form onsubmit="handleLogin(event)" style="display: flex; flex-direction: column; gap: 12px;">
+                <div class="form-group">
+                    <label class="form-label" for="login-user">Имя пользователя:</label>
+                    <input type="text" id="login-user" class="form-input" value="admin" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="login-pass">Пароль:</label>
+                    <input type="password" id="login-pass" class="form-input" placeholder="Пароль" required>
+                </div>
+                <button type="submit" class="btn-apply" id="btn-login-submit">Войти в систему</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Password Change Modal -->
+    <div id="pwd-modal" class="modal-backdrop">
+        <div class="modal-card">
+            <div class="card-header" style="padding-bottom: 6px;">
+                <h3 class="modal-title">🔑 Смена пароля администратора</h3>
+                <button type="button" class="copy-btn" onclick="closePasswordModal()">✕</button>
+            </div>
+            <p class="modal-desc">Новый пароль сохраняется во встроенную память flash и не сбрасывается после перезагрузки.</p>
+            <form onsubmit="handleChangePassword(event)" style="display: flex; flex-direction: column; gap: 12px;">
+                <div class="form-group">
+                    <label class="form-label" for="old-pass">Текущий пароль:</label>
+                    <input type="password" id="old-pass" class="form-input" placeholder="Текущий пароль" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="new-pass">Новый пароль:</label>
+                    <input type="password" id="new-pass" class="form-input" placeholder="Новый пароль" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="new-pass-confirm">Повтор нового пароля:</label>
+                    <input type="password" id="new-pass-confirm" class="form-input" placeholder="Повторите новый пароль" required>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <button type="button" class="btn-header" style="flex: 1;" onclick="closePasswordModal()">Отмена</button>
+                    <button type="submit" class="btn-apply" style="flex: 1.5;" id="btn-change-pwd">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Main Container -->
+    <div class="container" id="main-dashboard" style="filter: blur(4px); pointer-events: none;">
+        <header>
+            <div class="logo-area">
+                <div class="logo-icon">CC</div>
+                <div>
+                    <h1>CleanCam Control Hub</h1>
+                    <div style="font-size: 0.72rem; color: var(--text-muted);">GK7201V300 • H.265 Dual-Stream • Чистая прошивка</div>
+                </div>
+            </div>
+            <div class="header-badges">
+                <div id="status-badge" class="status-badge ap">
+                    <span class="status-dot"></span>
+                    <span id="status-text">Определение...</span>
+                </div>
+                <div class="auth-bar">
+                    <div class="user-pill">
+                        <span>👤</span>
+                        <strong id="user-display">admin</strong>
+                    </div>
+                    <button class="btn-header" onclick="openPasswordModal()">🔑 Пароль</button>
+                    <button class="btn-header danger" onclick="handleLogout()">Выход</button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <nav class="nav-tabs">
+            <button class="tab-btn active" onclick="switchTab('tab-live')">📹 Прямой эфир & PTZ</button>
+            <button class="tab-btn" onclick="switchTab('tab-image')">🎨 Изображение и Сенсор</button>
+            <button class="tab-btn" onclick="switchTab('tab-night')">🌙 Ночь и Подсветка</button>
+            <button class="tab-btn" onclick="switchTab('tab-video')">⚙️ Видеопотоки & Кодеки</button>
+            <button class="tab-btn" onclick="switchTab('tab-osd-audio')">🏷️ OSD & Аудио</button>
+            <button class="tab-btn" onclick="switchTab('tab-detect')">🚨 Детекция & Слежение</button>
+            <button class="tab-btn" onclick="switchTab('tab-network')">📶 Wi-Fi & Потоки</button>
+            <button class="tab-btn" onclick="switchTab('tab-system')">🕒 Время & Система</button>
+        </nav>
+
+        <!-- TAB 1: LIVE VIEW & PTZ -->
+        <div id="tab-live" class="tab-content active">
+            <div class="card" style="padding: 14px;">
+                <div class="card-header">
+                    <div class="card-title">📹 Прямой просмотр (Live Stream)</div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span id="live-fps" class="live-fps-badge" style="font-size: 0.78rem; color: var(--accent); font-family: monospace;">12 FPS</span>
+                        <button class="btn-scan" onclick="toggleLivePause()" id="btn-pause">⏸ Пауза</button>
+                        <button class="btn-scan" onclick="takeSnapshot()">📸 Снимок</button>
+                        <button class="btn-scan" onclick="toggleFullscreen()">⛶ Полный экран</button>
+                    </div>
+                </div>
+
+                <div class="video-container" id="video-container">
+                    <img id="live-img" class="live-video-elem live-feed-img" alt="Поток камеры" src="/cgi-bin/snapshot">
+                    
+                    <div class="video-overlay-ctrls">
+                        <div class="video-top-bar">
+                            <div class="video-badge">
+                                <span class="rec-dot"></span>
+                                <span>LIVE 1080P HEVC</span>
+                            </div>
+                            <div class="video-badge">
+                                <span>Пинг: <strong id="latency-val">~150ms</strong></span>
+                            </div>
+                        </div>
+                        <div class="video-bottom-bar">
+                            <span style="font-size: 0.72rem; color: #cbd5e1;">Наведите курсор или используйте стрелки/WASD на клавиатуре</span>
+                            <button class="video-action-btn" onclick="toggleFullscreen()">⛶ Развернуть</button>
+                        </div>
+                    </div>
+
+                    <div class="ptz-overlay-grid">
+                        <button class="ptz-overlay-btn" id="overlay-ptz-upleft" title="Вверх-Влево" onclick="sendPtz('DirectionUpLeft')">↖</button>
+                        <button class="ptz-overlay-btn" id="overlay-ptz-up" title="Вверх" onclick="sendPtz('DirectionUp')">▲</button>
+                        <button class="ptz-overlay-btn" id="overlay-ptz-upright" title="Вверх-Вправо" onclick="sendPtz('DirectionUpRight')">↗</button>
+                        <button class="ptz-overlay-btn" id="overlay-ptz-left" title="Влево" onclick="sendPtz('DirectionLeft')">◀</button>
+                        <button class="ptz-overlay-btn" id="overlay-ptz-stop" title="Стоп" style="color: #f87171; font-weight: bold;" onclick="sendPtz('DirectionStop')">■</button>
+                        <button class="ptz-overlay-btn" id="overlay-ptz-right" title="Вправо" onclick="sendPtz('DirectionRight')">▶</button>
+                        <button class="ptz-overlay-btn" id="overlay-ptz-downleft" title="Вниз-Влево" onclick="sendPtz('DirectionDownLeft')">↙</button>
+                        <button class="ptz-overlay-btn" id="overlay-ptz-down" title="Вниз" onclick="sendPtz('DirectionDown')">▼</button>
+                        <button class="ptz-overlay-btn" id="overlay-ptz-downright" title="Вниз-Вправо" onclick="sendPtz('DirectionDownRight')">↘</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Keyboard & Controls Hint Banner -->
+            <div style="background: rgba(30, 41, 59, 0.7); border: 1px solid #334155; border-radius: 8px; padding: 8px 12px; font-size: 0.78rem; color: #cbd5e1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <span>🎮 <strong>Клавиатура активна:</strong></span>
+                <span>Стрелки или <span class="kbd-badge">W</span><span class="kbd-badge">A</span><span class="kbd-badge">S</span><span class="kbd-badge">D</span> — поворот</span>
+                <span>•</span>
+                <span><span class="kbd-badge">Space</span> — Стоп</span>
+                <span>•</span>
+                <span><span class="kbd-badge">1</span>..<span class="kbd-badge">8</span> — Пресеты</span>
+                <span>•</span>
+                <span><span class="kbd-badge">+</span>/<span class="kbd-badge">-</span> — Шаг</span>
+            </div>
+
+            <div class="grid">
+                <!-- PTZ Pad -->
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">🕹️ Управление поворотным механизмом (PTZ)</div>
+                        <div style="display: flex; gap: 6px;">
+                            <button class="btn-scan" onclick="sendPtz('center')">🎯 В центр</button>
+                            <button class="btn-scan" onclick="sendPtz('calibrate')">⚙️ Калибровка</button>
+                        </div>
+                    </div>
+                    <div class="ptz-wrapper">
+                        <div class="ptz-grid">
+                            <button class="ptz-btn" id="btn-ptz-upleft" onclick="sendPtz('DirectionUpLeft')">↖</button>
+                            <button class="ptz-btn" id="btn-ptz-up" onclick="sendPtz('DirectionUp')">▲</button>
+                            <button class="ptz-btn" id="btn-ptz-upright" onclick="sendPtz('DirectionUpRight')">↗</button>
+                            <button class="ptz-btn" id="btn-ptz-left" onclick="sendPtz('DirectionLeft')">◀</button>
+                            <button class="ptz-btn ptz-stop" id="btn-ptz-stop" onclick="sendPtz('DirectionStop')">STOP</button>
+                            <button class="ptz-btn" id="btn-ptz-right" onclick="sendPtz('DirectionRight')">▶</button>
+                            <button class="ptz-btn" id="btn-ptz-downleft" onclick="sendPtz('DirectionDownLeft')">↙</button>
+                            <button class="ptz-btn" id="btn-ptz-down" onclick="sendPtz('DirectionDown')">▼</button>
+                            <button class="ptz-btn" id="btn-ptz-downright" onclick="sendPtz('DirectionDownRight')">↘</button>
+                        </div>
+                        <div class="slider-row" style="max-width: 250px;">
+                            <div class="slider-header">
+                                <span>Шаг перемещения:</span>
+                                <strong id="step-display">4</strong>
+                            </div>
+                            <input type="range" id="step-slider" min="1" max="8" value="4" oninput="document.getElementById('step-display').innerText = this.value">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- PTZ Presets Card (8 Slots) -->
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">📍 Позиции и Пресеты камеры (8 слотов)</div>
+                        <button class="btn-scan" onclick="loadPresetsList()">🔄 Обновить</button>
+                    </div>
+                    <p style="font-size: 0.78rem; color: var(--text-muted);">
+                        Кликните на название, чтобы изменить его. Нажмите <span class="kbd-badge">1</span>..<span class="kbd-badge">8</span> на клавиатуре для быстрого перехода:
+                    </p>
+                    <div class="preset-grid-8" id="presets-container">
+                        <!-- Populated dynamically with 8 slots -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 2: IMAGE & SENSOR -->
+        <div id="tab-image" class="tab-content">
+            <div class="tab-layout">
+                <div class="tab-main-col">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">🎨 Цветокоррекция и Базовые параметры сенсора</div>
+                            <button class="btn-scan" onclick="loadAllSettings()">🔄 Обновить</button>
+                        </div>
+
+                        <div class="grid">
+                            <div class="slider-row">
+                                <div class="slider-header">
+                                    <span>Яркость (Brightness):</span>
+                                    <strong id="val-brightness">50</strong>
+                                </div>
+                                <input type="range" id="set-brightness" min="0" max="100" value="50" oninput="document.getElementById('val-brightness').innerText = this.value">
+                            </div>
+
+                            <div class="slider-row">
+                                <div class="slider-header">
+                                    <span>Контрастность (Contrast):</span>
+                                    <strong id="val-contrast">50</strong>
+                                </div>
+                                <input type="range" id="set-contrast" min="0" max="100" value="50" oninput="document.getElementById('val-contrast').innerText = this.value">
+                            </div>
+
+                            <div class="slider-row">
+                                <div class="slider-header">
+                                    <span>Насыщенность (Saturation):</span>
+                                    <strong id="val-saturation">50</strong>
+                                </div>
+                                <input type="range" id="set-saturation" min="0" max="100" value="50" oninput="document.getElementById('val-saturation').innerText = this.value">
+                            </div>
+
+                            <div class="slider-row">
+                                <div class="slider-header">
+                                    <span>Оттенок (Hue):</span>
+                                    <strong id="val-hue">50</strong>
+                                </div>
+                                <input type="range" id="set-hue" min="0" max="100" value="50" oninput="document.getElementById('val-hue').innerText = this.value">
+                            </div>
+
+                            <div class="slider-row">
+                                <div class="slider-header">
+                                    <span>Четкость / Резкость (Sharpness):</span>
+                                    <strong id="val-sharpness">50</strong>
+                                </div>
+                                <input type="range" id="set-sharpness" min="0" max="100" value="50" oninput="document.getElementById('val-sharpness').innerText = this.value">
+                            </div>
+
+                            <div class="slider-row">
+                                <div class="slider-header">
+                                    <span>Усиление WDR (WDR Gain):</span>
+                                    <strong id="val-wdr-gain">50</strong>
+                                </div>
+                                <input type="range" id="set-wdr-gain" min="0" max="100" value="50" oninput="document.getElementById('val-wdr-gain').innerText = this.value">
+                            </div>
+                        </div>
+
+                        <div class="grid-3" style="margin-top: 10px;">
+                            <div class="form-group">
+                                <label class="form-label">Антимерцание (Anti-Flicker):</label>
+                                <select id="set-anti-flicker" class="form-select">
+                                    <option value="50Hz" selected>50 Hz (Россия / Европа)</option>
+                                    <option value="60Hz">60 Hz (США / Азия)</option>
+                                    <option value="Off">Выключено (Off)</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Режим WDR (Динамический диапазон):</label>
+                                <select id="set-wdr" class="form-select">
+                                    <option value="Auto" selected>Автоматический (Auto)</option>
+                                    <option value="Manual">Ручной (По ползунку)</option>
+                                    <option value="Off">Выключено (Off)</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Стиль цветопередачи:</label>
+                                <select id="set-style" class="form-select">
+                                    <option value="typedefault" selected>Стандартный (Default)</option>
+                                    <option value="type1">Насыщенный (Vivid)</option>
+                                    <option value="type2">Мягкий (Soft)</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Подавление яркого света (HLC):</label>
+                                <select id="set-hlc" class="form-select">
+                                    <option value="0" selected>Выключено</option>
+                                    <option value="1">Уровень 1 (Слабый)</option>
+                                    <option value="3">Уровень 3 (Средний)</option>
+                                    <option value="5">Уровень 5 (Анти-фары)</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Баланс белого:</label>
+                                <select id="set-white-balance" class="form-select">
+                                    <option value="Auto" selected>Автоматический (Auto)</option>
+                                    <option value="Manual">Фиксированный</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div style="display: flex; gap: 20px; margin-top: 8px; flex-wrap: wrap;">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="set-flip">
+                                <span>Переворот изображения (Flip 180° для потолочного монтажа)</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="set-mirror">
+                                <span>Зеркалирование по горизонтали (Mirror)</span>
+                            </label>
+                        </div>
+
+                        <button type="button" class="btn-apply" style="margin-top: 6px;" onclick="applyAllSettings()">Применить параметры изображения</button>
+                    </div>
+                </div>
+
+                <!-- Side Mini-Preview -->
+                <div class="tab-side-preview">
+                    <div class="mini-preview-card">
+                        <div class="card-header" style="padding-bottom: 6px;">
+                            <div class="card-title" style="font-size: 0.9rem;">📹 Живое превью</div>
+                            <span class="live-fps-badge" style="font-size: 0.74rem; color: var(--accent); font-family: monospace;">12 FPS</span>
+                        </div>
+                        <div class="mini-video-box">
+                            <img class="live-video-elem live-feed-img" alt="Превью" src="/cgi-bin/snapshot">
+                        </div>
+                        <div class="mini-ptz-bar">
+                            <button class="mini-ptz-btn" title="Влево" onclick="sendPtz('DirectionLeft')">◀</button>
+                            <button class="mini-ptz-btn" title="Вверх" onclick="sendPtz('DirectionUp')">▲</button>
+                            <button class="mini-ptz-btn stop" title="Стоп" onclick="sendPtz('DirectionStop')">■</button>
+                            <button class="mini-ptz-btn" title="Вниз" onclick="sendPtz('DirectionDown')">▼</button>
+                            <button class="mini-ptz-btn" title="Вправо" onclick="sendPtz('DirectionRight')">▶</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 3: NIGHT & LIGHTING -->
+        <div id="tab-night" class="tab-content">
+            <div class="tab-layout">
+                <div class="tab-main-col">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">🌙 Ночной режим, ИК-фильтр и LED-прожектор</div>
+                            <button class="btn-scan" onclick="loadAllSettings()">🔄 Обновить</button>
+                        </div>
+
+                        <div class="grid">
+                            <div class="form-group">
+                                <label class="form-label">Режим ночного видения (Day/Night IR-Cut):</label>
+                                <select id="set-daynight" class="form-select">
+                                    <option value="Auto" selected>Автоматический (По датчику света)</option>
+                                    <option value="Color">Всегда цветной (День)</option>
+                                    <option value="BW">Всегда ч/б (Ночной ИК)</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Шумоподавление 2D/3D NR:</label>
+                                <select id="set-denoise" class="form-select">
+                                    <option value="1">1 (Минимальное)</option>
+                                    <option value="3" selected>3 (Оптимальное)</option>
+                                    <option value="5">5 (Максимальное сглаживание)</option>
+                                </select>
+                            </div>
+
+                            <div class="slider-row">
+                                <div class="slider-header">
+                                    <span>Порог переключения День/Ночь (Threshold):</span>
+                                    <strong id="val-dnc-thr">30</strong>
+                                </div>
+                                <input type="range" id="set-dnc-thr" min="5" max="80" value="30" oninput="document.getElementById('val-dnc-thr').innerText = this.value">
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Режим белого LED-прожектора:</label>
+                                <select id="set-whitelight-mode" class="form-select">
+                                    <option value="Auto" selected>Автоматический (При тревоге/движении)</option>
+                                    <option value="Open">Всегда включен (Фонарь)</option>
+                                    <option value="Close">Выключен</option>
+                                </select>
+                            </div>
+
+                            <div class="slider-row">
+                                <div class="slider-header">
+                                    <span>Яркость LED-прожектора:</span>
+                                    <strong id="val-wl-bright">50</strong>%
+                                </div>
+                                <input type="range" id="set-wl-bright" min="10" max="100" value="50" oninput="document.getElementById('val-wl-bright').innerText = this.value">
+                            </div>
+
+                            <div class="slider-row">
+                                <div class="slider-header">
+                                    <span>Длительность свечения при тревоге:</span>
+                                    <strong id="val-wl-dur">60</strong> сек
+                                </div>
+                                <input type="range" id="set-wl-dur" min="10" max="300" step="10" value="60" oninput="document.getElementById('val-wl-dur').innerText = this.value">
+                            </div>
+                        </div>
+
+                        <button type="button" class="btn-apply" onclick="applyAllSettings()">Применить параметры ночного видения</button>
+                    </div>
+                </div>
+
+                <!-- Side Mini-Preview -->
+                <div class="tab-side-preview">
+                    <div class="mini-preview-card">
+                        <div class="card-header" style="padding-bottom: 6px;">
+                            <div class="card-title" style="font-size: 0.9rem;">📹 Живое превью</div>
+                            <span class="live-fps-badge" style="font-size: 0.74rem; color: var(--accent); font-family: monospace;">12 FPS</span>
+                        </div>
+                        <div class="mini-video-box">
+                            <img class="live-video-elem live-feed-img" alt="Превью" src="/cgi-bin/snapshot">
+                        </div>
+                        <div class="mini-ptz-bar">
+                            <button class="mini-ptz-btn" title="Влево" onclick="sendPtz('DirectionLeft')">◀</button>
+                            <button class="mini-ptz-btn" title="Вверх" onclick="sendPtz('DirectionUp')">▲</button>
+                            <button class="mini-ptz-btn stop" title="Стоп" onclick="sendPtz('DirectionStop')">■</button>
+                            <button class="mini-ptz-btn" title="Вниз" onclick="sendPtz('DirectionDown')">▼</button>
+                            <button class="mini-ptz-btn" title="Вправо" onclick="sendPtz('DirectionRight')">▶</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 4: VIDEO STREAMS & COMPRESSION -->
+        <div id="tab-video" class="tab-content">
+            <div class="tab-layout">
+                <div class="tab-main-col">
+                    <div class="grid">
+                        <!-- Main Stream -->
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="card-title">📹 Основной поток (Main 1080P)</div>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Формат сжатия (Кодек):</label>
+                                <select id="set-compression" class="form-select">
+                                    <option value="H.265" selected>H.265 (HEVC — максимальная эффективность)</option>
+                                    <option value="H.264">H.264 (AVC — совместимость)</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Частота кадров (FPS):</label>
+                                <select id="set-fps" class="form-select">
+                                    <option value="10">10 fps</option>
+                                    <option value="12" selected>12 fps (Базовый)</option>
+                                    <option value="15">15 fps</option>
+                                    <option value="20">20 fps</option>
+                                    <option value="25">25 fps (Максимум)</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Битрейт основного потока:</label>
+                                <select id="set-bitrate" class="form-select">
+                                    <option value="512">512 Kbps</option>
+                                    <option value="1024" selected>1024 Kbps (1 Mbps)</option>
+                                    <option value="2048">2048 Kbps (2 Mbps)</option>
+                                    <option value="4096">4096 Kbps (4 Mbps — Высокое качество)</option>
+                                    <option value="6144">6144 Kbps (6 Mbps)</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Управление битрейтом:</label>
+                                <select id="set-bitrate-ctrl" class="form-select">
+                                    <option value="VBR" selected>VBR (Переменный — лучший)</option>
+                                    <option value="CBR">CBR (Постоянный)</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Интервал ключевых кадров (GOP):</label>
+                                <select id="set-gop" class="form-select">
+                                    <option value="1">1 сек</option>
+                                    <option value="2">2 сек</option>
+                                    <option value="4" selected>4 сек</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Sub Stream -->
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="card-title">📱 Второй поток (Sub Stream для NVR детекции)</div>
+                            </div>
+
+                            <label class="checkbox-label" style="margin-bottom: 6px;">
+                                <input type="checkbox" id="set-sub-enable" checked>
+                                <strong>Включить дополнительный поток (Sub Stream)</strong>
+                            </label>
+
+                            <div class="form-group">
+                                <label class="form-label">Разрешение второго потока:</label>
+                                <select id="set-sub-res" class="form-select">
+                                    <option value="D1" selected>D1 (800 × 448 / 704 × 576)</option>
+                                    <option value="CIF">CIF (352 × 288)</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Частота кадров (Sub FPS):</label>
+                                <select id="set-sub-fps" class="form-select">
+                                    <option value="10">10 fps</option>
+                                    <option value="12" selected>12 fps</option>
+                                    <option value="15">15 fps</option>
+                                    <option value="25">25 fps</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="form-label">Битрейт второго потока:</label>
+                                <select id="set-sub-bitrate" class="form-select">
+                                    <option value="256">256 Kbps (Экономный)</option>
+                                    <option value="512" selected>512 Kbps (Рекомендуется)</option>
+                                    <option value="1024">1024 Kbps</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="button" class="btn-apply" onclick="applyAllSettings()">Применить параметры видеопотоков</button>
+                </div>
+
+                <!-- Side Mini-Preview -->
+                <div class="tab-side-preview">
+                    <div class="mini-preview-card">
+                        <div class="card-header" style="padding-bottom: 6px;">
+                            <div class="card-title" style="font-size: 0.9rem;">📹 Живое превью</div>
+                            <span class="live-fps-badge" style="font-size: 0.74rem; color: var(--accent); font-family: monospace;">12 FPS</span>
+                        </div>
+                        <div class="mini-video-box">
+                            <img class="live-video-elem live-feed-img" alt="Превью" src="/cgi-bin/snapshot">
+                        </div>
+                        <div class="mini-ptz-bar">
+                            <button class="mini-ptz-btn" title="Влево" onclick="sendPtz('DirectionLeft')">◀</button>
+                            <button class="mini-ptz-btn" title="Вверх" onclick="sendPtz('DirectionUp')">▲</button>
+                            <button class="mini-ptz-btn stop" title="Стоп" onclick="sendPtz('DirectionStop')">■</button>
+                            <button class="mini-ptz-btn" title="Вниз" onclick="sendPtz('DirectionDown')">▼</button>
+                            <button class="mini-ptz-btn" title="Вправо" onclick="sendPtz('DirectionRight')">▶</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 5: OSD & AUDIO -->
+        <div id="tab-osd-audio" class="tab-content">
+            <div class="tab-layout">
+                <div class="tab-main-col">
+                    <div class="grid">
+                        <!-- OSD Card -->
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="card-title">🏷️ Наложение на видео (OSD)</div>
+                            </div>
+
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="set-osd-time" checked onchange="updateOsdPreviewMarkers()">
+                                <span>Отображать дату и время на видео (Time Stamp)</span>
+                            </label>
+
+                            <div class="form-group" style="margin-left: 24px;">
+                                <label class="form-label" for="set-osd-time-pos">Положение даты и времени:</label>
+                                <select id="set-osd-time-pos" class="form-select" onchange="updateOsdPreviewMarkers()">
+                                    <option value="TopRight" selected>Вверху справа (Top-Right — по умолчанию)</option>
+                                    <option value="TopLeft">Вверху слева (Top-Left)</option>
+                                    <option value="BottomRight">Внизу справа (Bottom-Right)</option>
+                                    <option value="BottomLeft">Внизу слева (Bottom-Left)</option>
+                                </select>
+                            </div>
+
+                            <label class="checkbox-label" style="margin-top: 8px;">
+                                <input type="checkbox" id="set-osd-title" checked onchange="updateOsdPreviewMarkers()">
+                                <span>Отображать имя камеры на видео</span>
+                            </label>
+
+                            <div class="form-group" style="margin-left: 24px;">
+                                <label class="form-label" for="set-osd-name">Имя камеры (Текст OSD):</label>
+                                <input type="text" id="set-osd-name" class="form-input" value="CleanCam" maxlength="32" oninput="updateOsdPreviewMarkers()">
+                            </div>
+
+                            <div class="form-group" style="margin-left: 24px;">
+                                <label class="form-label" for="set-osd-title-pos">Положение имени камеры:</label>
+                                <select id="set-osd-title-pos" class="form-select" onchange="updateOsdPreviewMarkers()">
+                                    <option value="TopLeft" selected>Вверху слева (Top-Left — по умолчанию)</option>
+                                    <option value="TopRight">Вверху справа (Top-Right)</option>
+                                    <option value="BottomLeft">Внизу слева (Bottom-Left)</option>
+                                    <option value="BottomRight">Внизу справа (Bottom-Right)</option>
+                                </select>
+                            </div>
+
+                            <div class="notice-box">
+                                💡 Вы можете нажать на интерактивные метки <strong>[🕒 Дата]</strong> и <strong>[🏷️ Имя]</strong> прямо на превью справа для мгновенного перемещения в нужный угол!
+                            </div>
+                        </div>
+
+                        <!-- Audio Card -->
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="card-title">🔊 Звук и Громкость (Audio)</div>
+                            </div>
+
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="set-audio-enable" checked>
+                                <span>Передавать звук микрофона в потоках RTSP/ONVIF</span>
+                            </label>
+
+                            <div class="slider-row" style="margin-top: 8px;">
+                                <div class="slider-header">
+                                    <span>Чувствительность микрофона (Mic Volume):</span>
+                                    <strong id="val-mic-vol">80</strong>%
+                                </div>
+                                <input type="range" id="set-mic-vol" min="0" max="100" value="80" oninput="document.getElementById('val-mic-vol').innerText = this.value">
+                            </div>
+
+                            <div class="slider-row">
+                                <div class="slider-header">
+                                    <span>Громкость динамика (Speaker Volume):</span>
+                                    <strong id="val-spk-vol">80</strong>%
+                                </div>
+                                <input type="range" id="set-spk-vol" min="0" max="100" value="80" oninput="document.getElementById('val-spk-vol').innerText = this.value">
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="button" class="btn-apply" onclick="applyAllSettings()">Применить настройки OSD и Звука</button>
+                </div>
+
+                <!-- Side Mini-Preview with Interactive OSD Overlay -->
+                <div class="tab-side-preview">
+                    <div class="mini-preview-card">
+                        <div class="card-header" style="padding-bottom: 6px;">
+                            <div class="card-title" style="font-size: 0.9rem;">📹 Интерактивное превью OSD</div>
+                            <span class="live-fps-badge" style="font-size: 0.74rem; color: var(--accent); font-family: monospace;">12 FPS</span>
+                        </div>
+                        <div class="mini-video-box" id="osd-preview-box">
+                            <img class="live-video-elem live-feed-img" alt="Превью" src="/cgi-bin/snapshot">
+                            <div class="osd-interactive-layer">
+                                <div id="marker-osd-title" class="osd-marker-tag title pos-TopLeft" title="Нажмите для смены угла" onclick="cycleOsdCorner('title')">
+                                    <span>🏷️</span> <span id="marker-title-text">CleanCam</span>
+                                </div>
+                                <div id="marker-osd-time" class="osd-marker-tag time pos-TopRight" title="Нажмите для смены угла" onclick="cycleOsdCorner('time')">
+                                    <span>🕒</span> <span>2026-11-17</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mini-ptz-bar">
+                            <button class="mini-ptz-btn" title="Влево" onclick="sendPtz('DirectionLeft')">◀</button>
+                            <button class="mini-ptz-btn" title="Вверх" onclick="sendPtz('DirectionUp')">▲</button>
+                            <button class="mini-ptz-btn stop" title="Стоп" onclick="sendPtz('DirectionStop')">■</button>
+                            <button class="mini-ptz-btn" title="Вниз" onclick="sendPtz('DirectionDown')">▼</button>
+                            <button class="mini-ptz-btn" title="Вправо" onclick="sendPtz('DirectionRight')">▶</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 6: MOTION & TRACKING -->
+        <div id="tab-detect" class="tab-content">
+            <div class="tab-layout">
+                <div class="tab-main-col">
+                    <div class="grid">
+                        <!-- Motion Detection -->
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="card-title">🚨 Детекция движения (Motion Detection)</div>
+                            </div>
+
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="set-motion-enable" checked>
+                                <strong>Включить программную детекцию движения</strong>
+                            </label>
+
+                            <div class="form-group" style="margin-top: 8px;">
+                                <label class="form-label">Чувствительность детекции:</label>
+                                <select id="set-motion-sens" class="form-select">
+                                    <option value="1">1 (Очень низкая — минимум ложных)</option>
+                                    <option value="2">2 (Низкая)</option>
+                                    <option value="3" selected>3 (Оптимальная)</option>
+                                    <option value="4">4 (Высокая)</option>
+                                    <option value="5">5 (Максимальная)</option>
+                                </select>
+                            </div>
+
+                            <label class="checkbox-label" style="margin-top: 8px;">
+                                <input type="checkbox" id="set-motion-beep">
+                                <span>Звуковой сигнал встроенного зуммера при тревоге</span>
+                            </label>
+                        </div>
+
+                        <!-- PTZ Auto-Tracking -->
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="card-title">🎯 Авто-слежение поворотным механизмом (PTZ Track)</div>
+                            </div>
+
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="set-track-enable">
+                                <strong>Автоматически поворачивать камеру за объектом</strong>
+                            </label>
+
+                            <div class="form-group" style="margin-top: 8px;">
+                                <label class="form-label">Чувствительность трекинга:</label>
+                                <select id="set-track-sens" class="form-select">
+                                    <option value="1" selected>1 (Стандартная)</option>
+                                    <option value="2">2 (Быстрая реакция)</option>
+                                    <option value="3">3 (Высокая)</option>
+                                </select>
+                            </div>
+
+                            <div class="slider-row" style="margin-top: 8px;">
+                                <div class="slider-header">
+                                    <span>Возврат в исходное положение после потери объекта:</span>
+                                    <strong id="val-track-ret">60</strong> сек
+                                </div>
+                                <input type="range" id="set-track-ret" min="10" max="300" step="10" value="60" oninput="document.getElementById('val-track-ret').innerText = this.value">
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="button" class="btn-apply" onclick="applyAllSettings()">Применить параметры детекции и слежения</button>
+                </div>
+
+                <!-- Side Mini-Preview -->
+                <div class="tab-side-preview">
+                    <div class="mini-preview-card">
+                        <div class="card-header" style="padding-bottom: 6px;">
+                            <div class="card-title" style="font-size: 0.9rem;">📹 Живое превью</div>
+                            <span class="live-fps-badge" style="font-size: 0.74rem; color: var(--accent); font-family: monospace;">12 FPS</span>
+                        </div>
+                        <div class="mini-video-box">
+                            <img class="live-video-elem live-feed-img" alt="Превью" src="/cgi-bin/snapshot">
+                        </div>
+                        <div class="mini-ptz-bar">
+                            <button class="mini-ptz-btn" title="Влево" onclick="sendPtz('DirectionLeft')">◀</button>
+                            <button class="mini-ptz-btn" title="Вверх" onclick="sendPtz('DirectionUp')">▲</button>
+                            <button class="mini-ptz-btn stop" title="Стоп" onclick="sendPtz('DirectionStop')">■</button>
+                            <button class="mini-ptz-btn" title="Вниз" onclick="sendPtz('DirectionDown')">▼</button>
+                            <button class="mini-ptz-btn" title="Вправо" onclick="sendPtz('DirectionRight')">▶</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 7: WI-FI & STREAMS -->
+        <div id="tab-network" class="tab-content">
+            <div class="grid">
+                <!-- Wi-Fi Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">📶 Беспроводная сеть Wi-Fi</div>
+                        <button class="btn-scan" id="btn-scan" onclick="scanWifi()">
+                            <span id="scan-spinner">🔍</span> Сканировать
+                        </button>
+                    </div>
+
+                    <div class="notice-box">
+                        При потере связи камера автоматически включает резервную сеть <strong>CleanCam_Setup</strong> (192.168.10.1).
+                    </div>
+
+                    <div class="wifi-list" id="wifi-list">
+                        <div style="text-align: center; color: var(--text-muted); padding: 14px; font-size: 0.8rem;">
+                            Нажмите «Сканировать», чтобы обновить список доступных сетей.
+                        </div>
+                    </div>
+
+                    <form onsubmit="connectWifi(event)" style="display: flex; flex-direction: column; gap: 10px;">
+                        <div class="form-group">
+                            <label class="form-label">Имя сети (SSID):</label>
+                            <input type="text" id="ssid-input" class="form-input" placeholder="SSID сети" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Пароль Wi-Fi:</label>
+                            <input type="password" id="pass-input" class="form-input" placeholder="Пароль">
+                        </div>
+                        <button type="submit" class="btn-apply" id="btn-connect">Подключить камеру к Wi-Fi</button>
+                    </form>
+                </div>
+
+                <!-- Dual RTSP Streams & ONVIF Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">📡 Ссылки на видеопотоки камеры</div>
+                    </div>
+                    <div class="stream-row">
+                        <label class="form-label">Основной RTSP поток (Main 1080P HEVC / Full HD):</label>
+                        <div class="url-box">
+                            <span id="rtsp-main">rtsp://camera_ip:554/live/ch0</span>
+                            <button class="copy-btn" onclick="copyText('rtsp-main')">Копировать</button>
+                        </div>
+
+                        <label class="form-label">Второй RTSP поток (Sub D1 HEVC для NVR детекции движения):</label>
+                        <div class="url-box">
+                            <span id="rtsp-sub">rtsp://camera_ip:554/live/ch1</span>
+                            <button class="copy-btn" onclick="copyText('rtsp-sub')">Копировать</button>
+                        </div>
+
+                        <label class="form-label">Прямые ссылки для стриминга (stream0 / stream1):</label>
+                        <div class="url-box">
+                            <span id="rtsp-stream0">rtsp://camera_ip:554/stream0</span>
+                            <button class="copy-btn" onclick="copyText('rtsp-stream0')">stream0</button>
+                        </div>
+                        <div class="url-box">
+                            <span id="rtsp-stream1">rtsp://camera_ip:554/stream1</span>
+                            <button class="copy-btn" onclick="copyText('rtsp-stream1')">stream1</button>
+                        </div>
+
+                        <label class="form-label">ONVIF Device Service (Dual Profile S/G):</label>
+                        <div class="url-box">
+                            <span id="onvif-url">http://camera_ip:8899/onvif/device_service</span>
+                            <button class="copy-btn" onclick="copyText('onvif-url')">Копировать</button>
+                        </div>
+
+                        <label class="form-label">HTTP Snapshot (Прямой аппаратный снимок JPEG):</label>
+                        <div class="url-box">
+                            <span id="snap-url">http://camera_ip:8080/cgi-bin/snapshot</span>
+                            <button class="copy-btn" onclick="copyText('snap-url')">Копировать</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 8: SYSTEM & TIME -->
+        <div id="tab-system" class="tab-content">
+            <div class="tab-layout">
+                <div class="tab-main-col">
+                    <div class="grid">
+                        <!-- Time Synchronization -->
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="card-title">🕒 Дата и системное время</div>
+                            </div>
+                            <p style="font-size: 0.82rem; color: var(--text-muted);">
+                                Текущее время на камере: <strong id="cam-current-time" style="color: var(--accent); font-family: monospace;">Загрузка...</strong>
+                            </p>
+                            <button type="button" class="btn-apply" onclick="syncBrowserTime()">🕒 Синхронизировать время с компьютером</button>
+                        </div>
+
+                        <!-- System Information & Maintenance -->
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="card-title">🖥️ Управление устройством</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Сетевое имя камеры (Hostname):</label>
+                                <input type="text" id="set-device-name" class="form-input" value="CleanCam-GK7201">
+                            </div>
+                            <div style="display: flex; gap: 8px; margin-top: 10px;">
+                                <button type="button" class="btn-apply" style="flex: 1;" onclick="applyAllSettings()">Сохранить имя</button>
+                                <button type="button" class="btn-header danger" style="flex: 1; padding: 11px;" onclick="confirmReboot()">🔄 Перезагрузить камеру</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Side Mini-Preview -->
+                <div class="tab-side-preview">
+                    <div class="mini-preview-card">
+                        <div class="card-header" style="padding-bottom: 6px;">
+                            <div class="card-title" style="font-size: 0.9rem;">📹 Живое превью</div>
+                            <span class="live-fps-badge" style="font-size: 0.74rem; color: var(--accent); font-family: monospace;">12 FPS</span>
+                        </div>
+                        <div class="mini-video-box">
+                            <img class="live-video-elem live-feed-img" alt="Превью" src="/cgi-bin/snapshot">
+                        </div>
+                        <div class="mini-ptz-bar">
+                            <button class="mini-ptz-btn" title="Влево" onclick="sendPtz('DirectionLeft')">◀</button>
+                            <button class="mini-ptz-btn" title="Вверх" onclick="sendPtz('DirectionUp')">▲</button>
+                            <button class="mini-ptz-btn stop" title="Стоп" onclick="sendPtz('DirectionStop')">■</button>
+                            <button class="mini-ptz-btn" title="Вниз" onclick="sendPtz('DirectionDown')">▼</button>
+                            <button class="mini-ptz-btn" title="Вправо" onclick="sendPtz('DirectionRight')">▶</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast"></div>
+
+    <script>
+        const API_BASE = "";
+        let isLivePaused = false;
+        let frameCount = 0;
+        let fpsTimer = performance.now();
+        let toastTimeout = null;
+        let savedPresets = {};
+
+        const defaultPresetNames = {
+            1: "🚪 Входная дверь",
+            2: "🚗 Въезд / Ворота",
+            3: "🪟 Окно",
+            4: "🅿️ Парковка",
+            5: "🏡 Двор / Сад",
+            6: "🚪 Калитка",
+            7: "🛡️ Периметр",
+            8: "🔭 Общий обзор"
+        };
+
+        // --- TOAST NOTIFICATIONS ---
+        function showToast(msg, type = "success") {
+            const t = document.getElementById("toast");
+            t.className = `toast ${type}`;
+            t.innerText = msg;
+            t.style.display = "block";
+            clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(() => { t.style.display = "none"; }, 3500);
+        }
+
+        function copyText(elemId) {
+            const txt = document.getElementById(elemId).innerText;
+            navigator.clipboard.writeText(txt).then(() => {
+                showToast("Ссылка скопирована в буфер обмена!");
+            });
+        }
+
+        // --- TAB SWITCHING ---
+        function switchTab(tabId) {
+            document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
+            document.querySelectorAll(".tab-content").forEach(c => c.classList.remove("active"));
+
+            const targetBtn = Array.from(document.querySelectorAll(".tab-btn")).find(b => b.getAttribute("onclick").includes(tabId));
+            if (targetBtn) targetBtn.classList.add("active");
+
+            const content = document.getElementById(tabId);
+            if (content) content.classList.add("active");
+
+            if (tabId === "tab-osd-audio") {
+                updateOsdPreviewMarkers();
+            }
+        }
+
+        // --- AUTHENTICATION ---
+        function checkAuth() {
+            fetch(`${API_BASE}/cgi-bin/auth?action=check`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === "ok") {
+                        unlockDashboard(data.username);
+                    } else {
+                        showLoginModal();
+                    }
+                })
+                .catch(() => showLoginModal());
+        }
+
+        function showLoginModal() {
+            document.getElementById("login-modal").style.display = "flex";
+            document.getElementById("main-dashboard").style.filter = "blur(4px)";
+            document.getElementById("main-dashboard").style.pointerEvents = "none";
+        }
+
+        function unlockDashboard(username) {
+            document.getElementById("login-modal").style.display = "none";
+            document.getElementById("main-dashboard").style.filter = "none";
+            document.getElementById("main-dashboard").style.pointerEvents = "auto";
+            document.getElementById("user-display").innerText = username || "admin";
+
+            startLiveStream();
+            renderPresetSlots();
+            loadPresetsList();
+            loadAllSettings();
+            updateStatus();
+        }
+
+        function handleLogin(e) {
+            e.preventDefault();
+            const u = document.getElementById("login-user").value.trim();
+            const p = document.getElementById("login-pass").value;
+            const btn = document.getElementById("btn-login-submit");
+
+            btn.disabled = true;
+            btn.innerText = "Авторизация...";
+
+            fetch(`${API_BASE}/cgi-bin/auth?action=login`, {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: `user=${encodeURIComponent(u)}&pass=${encodeURIComponent(p)}`
+            })
+            .then(r => r.json())
+            .then(data => {
+                btn.disabled = false;
+                btn.innerText = "Войти в систему";
+                if (data.status === "ok") {
+                    showToast("Успешный вход в CleanCam OS!");
+                    unlockDashboard(data.username);
+                } else {
+                    showToast(data.message || "Неверный логин или пароль", "error");
+                }
+            })
+            .catch(() => {
+                btn.disabled = false;
+                btn.innerText = "Войти в систему";
+                showToast("Ошибка соединения с камерой", "error");
+            });
+        }
+
+        function handleLogout() {
+            fetch(`${API_BASE}/cgi-bin/auth?action=logout`)
+                .then(() => {
+                    showToast("Выход выполнен");
+                    showLoginModal();
+                });
+        }
+
+        function openPasswordModal() { document.getElementById("pwd-modal").style.display = "flex"; }
+        function closePasswordModal() { document.getElementById("pwd-modal").style.display = "none"; }
+
+        function handleChangePassword(e) {
+            e.preventDefault();
+            const oldPass = document.getElementById("old-pass").value;
+            const newPass = document.getElementById("new-pass").value;
+            const confirmPass = document.getElementById("new-pass-confirm").value;
+
+            if (newPass !== confirmPass) {
+                showToast("Новые пароли не совпадают!", "error");
+                return;
+            }
+
+            const btn = document.getElementById("btn-change-pwd");
+            btn.disabled = true;
+            btn.innerText = "Сохранение...";
+
+            fetch(`${API_BASE}/cgi-bin/auth?action=change_password`, {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: `old_pass=${encodeURIComponent(oldPass)}&new_pass=${encodeURIComponent(newPass)}`
+            })
+            .then(r => r.json())
+            .then(data => {
+                btn.disabled = false;
+                btn.innerText = "Сохранить";
+                if (data.status === "ok") {
+                    showToast(data.message || "Пароль успешно обновлен!");
+                    closePasswordModal();
+                    document.getElementById("old-pass").value = "";
+                    document.getElementById("new-pass").value = "";
+                    document.getElementById("new-pass-confirm").value = "";
+                } else {
+                    showToast(data.message || "Ошибка смены пароля", "error");
+                }
+            })
+            .catch(() => {
+                btn.disabled = false;
+                btn.innerText = "Сохранить";
+                showToast("Ошибка сети при смене пароля", "error");
+            });
+        }
+
+        // --- SYNCHRONIZED LIVE VIDEO STREAMING ---
+        function startLiveStream() {
+            isLivePaused = false;
+            scheduleNextFrame();
+        }
+
+        function scheduleNextFrame() {
+            if (isLivePaused) return;
+
+            const t0 = performance.now();
+            const img = new Image();
+            img.onload = () => {
+                if (isLivePaused) return;
+
+                // Update all visible live feeds across all tabs
+                document.querySelectorAll(".live-feed-img").forEach(el => {
+                    el.src = img.src;
+                });
+
+                const now = performance.now();
+                const latency = Math.round(now - t0);
+                const latElem = document.getElementById("latency-val");
+                if (latElem) latElem.innerText = `~${latency}ms`;
+
+                frameCount++;
+                if (now - fpsTimer >= 1000) {
+                    const fps = Math.round((frameCount * 1000) / (now - fpsTimer));
+                    document.querySelectorAll(".live-fps-badge").forEach(el => {
+                        el.innerText = `${fps} FPS`;
+                    });
+                    frameCount = 0;
+                    fpsTimer = now;
+                }
+
+                setTimeout(scheduleNextFrame, 70);
+            };
+
+            img.onerror = () => setTimeout(scheduleNextFrame, 350);
+            img.src = `${API_BASE}/cgi-bin/snapshot?t=${Date.now()}`;
+        }
+
+        function toggleLivePause() {
+            isLivePaused = !isLivePaused;
+            const btn = document.getElementById("btn-pause");
+            if (isLivePaused) {
+                btn.innerText = "▶ Возобновить";
+                showToast("Видеопоток приостановлен");
+            } else {
+                btn.innerText = "⏸ Пауза";
+                startLiveStream();
+                showToast("Воспроизведение возобновлено");
+            }
+        }
+
+        function takeSnapshot() {
+            const a = document.createElement("a");
+            a.href = `${API_BASE}/cgi-bin/snapshot?download=1&t=${Date.now()}`;
+            a.download = `cleancam_${new Date().toISOString().replace(/[:.]/g, "-")}.jpg`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            showToast("Кадр сохранен на устройство!");
+        }
+
+        function toggleFullscreen() {
+            const container = document.getElementById("video-container");
+            if (!document.fullscreenElement) {
+                if (container.requestFullscreen) container.requestFullscreen();
+                container.classList.add("fullscreen");
+            } else {
+                if (document.exitFullscreen) document.exitFullscreen();
+                container.classList.remove("fullscreen");
+            }
+        }
+
+        // --- PTZ CONTROLS & VISUAL FEEDBACK ---
+        function highlightPtzBtn(btnId) {
+            if (!btnId) return;
+            const btn = document.getElementById(btnId);
+            if (btn) {
+                btn.classList.add("active-key");
+                setTimeout(() => btn.classList.remove("active-key"), 200);
+            }
+        }
+
+        function sendPtz(direction) {
+            const slider = document.getElementById("step-slider");
+            const step = slider ? slider.value : 4;
+            fetch(`${API_BASE}/cgi-bin/ptz?dir=${direction}&step=${step}`)
+                .then(r => r.json())
+                .catch(() => {});
+        }
+
+        function adjustStep(delta) {
+            const slider = document.getElementById("step-slider");
+            if (!slider) return;
+            let val = parseInt(slider.value) + delta;
+            if (val < 1) val = 1;
+            if (val > 8) val = 8;
+            slider.value = val;
+            document.getElementById("step-display").innerText = val;
+            showToast(`Шаг поворота: ${val}`);
+        }
+
+        // --- KEYBOARD PTZ NAVIGATION ---
+        let lastPtzTime = 0;
+        const PTZ_COOLDOWN = 150;
+
+        window.addEventListener("keydown", (e) => {
+            const tag = document.activeElement ? document.activeElement.tagName : "";
+            if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+            let dir = null;
+            let btnId = null;
+
+            switch (e.code) {
+                case "ArrowUp":
+                case "KeyW":
+                    dir = "DirectionUp";
+                    btnId = "btn-ptz-up";
+                    break;
+                case "ArrowDown":
+                case "KeyS":
+                    dir = "DirectionDown";
+                    btnId = "btn-ptz-down";
+                    break;
+                case "ArrowLeft":
+                case "KeyA":
+                    dir = "DirectionLeft";
+                    btnId = "btn-ptz-left";
+                    break;
+                case "ArrowRight":
+                case "KeyD":
+                    dir = "DirectionRight";
+                    btnId = "btn-ptz-right";
+                    break;
+                case "Space":
+                    dir = "DirectionStop";
+                    btnId = "btn-ptz-stop";
+                    break;
+                case "Digit1": case "Numpad1": gotoPreset(1); break;
+                case "Digit2": case "Numpad2": gotoPreset(2); break;
+                case "Digit3": case "Numpad3": gotoPreset(3); break;
+                case "Digit4": case "Numpad4": gotoPreset(4); break;
+                case "Digit5": case "Numpad5": gotoPreset(5); break;
+                case "Digit6": case "Numpad6": gotoPreset(6); break;
+                case "Digit7": case "Numpad7": gotoPreset(7); break;
+                case "Digit8": case "Numpad8": gotoPreset(8); break;
+                case "Minus": case "NumpadSubtract": adjustStep(-1); break;
+                case "Equal": case "NumpadAdd": adjustStep(1); break;
+            }
+
+            if (dir) {
+                e.preventDefault();
+                const now = Date.now();
+                if (now - lastPtzTime >= PTZ_COOLDOWN) {
+                    lastPtzTime = now;
+                    sendPtz(dir);
+                    highlightPtzBtn(btnId);
+                }
+            }
+        });
+
+        // --- PRESETS (8 SLOTS) ---
+        function renderPresetSlots() {
+            const container = document.getElementById("presets-container");
+            if (!container) return;
+            container.innerHTML = "";
+
+            for (let i = 1; i <= 8; i++) {
+                const savedName = localStorage.getItem(`cleancam_preset_${i}`) || defaultPresetNames[i] || `Пресет ${i}`;
+                const coords = savedPresets[i] ? `(${savedPresets[i].x}, ${savedPresets[i].y})` : "Не сохранен";
+
+                const slot = document.createElement("div");
+                slot.className = "preset-slot";
+                slot.id = `preset-slot-${i}`;
+                slot.innerHTML = `
+                    <div class="preset-slot-header">
+                        <div class="preset-title-row">
+                            <span class="preset-num-tag">${i}</span>
+                            <input type="text" class="preset-name-input" id="preset-name-${i}" value="${savedName}" maxlength="24" onchange="savePresetName(${i}, this.value)" title="Кликните для редактирования имени">
+                        </div>
+                        <span class="preset-coords-badge" id="preset-coords-${i}">${coords}</span>
+                    </div>
+                    <div class="preset-actions">
+                        <button class="preset-btn-go" onclick="gotoPreset(${i})">🚀 Перейти</button>
+                        <button class="preset-btn-save" onclick="savePreset(${i})">💾 Запомнить</button>
+                    </div>
+                `;
+                container.appendChild(slot);
+            }
+        }
+
+        function savePresetName(num, newName) {
+            const val = newName.trim() || `Пресет ${num}`;
+            localStorage.setItem(`cleancam_preset_${num}`, val);
+            showToast(`Имя слота ${num} обновлено: «${val}»`);
+        }
+
+        function loadPresetsList() {
+            fetch(`${API_BASE}/cgi-bin/ptz?dir=preset_list`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === "ok" && data.presets) {
+                        savedPresets = data.presets;
+                        for (let i = 1; i <= 8; i++) {
+                            const badge = document.getElementById(`preset-coords-${i}`);
+                            if (badge) {
+                                if (savedPresets[i]) {
+                                    badge.innerText = `(${savedPresets[i].x}, ${savedPresets[i].y})`;
+                                    badge.style.color = "#34d399";
+                                } else {
+                                    badge.innerText = "Не сохранен";
+                                    badge.style.color = "var(--text-muted)";
+                                }
+                            }
+                        }
+                    }
+                })
+                .catch(() => {});
+        }
+
+        function savePreset(num) {
+            fetch(`${API_BASE}/cgi-bin/ptz?dir=preset_save&num=${num}`)
+                .then(r => r.json())
+                .then(res => {
+                    showToast(res.message || `Пресет ${num} сохранен!`);
+                    if (res.x !== undefined && res.y !== undefined) {
+                        savedPresets[num] = { x: res.x, y: res.y };
+                        const badge = document.getElementById(`preset-coords-${num}`);
+                        if (badge) {
+                            badge.innerText = `(${res.x}, ${res.y})`;
+                            badge.style.color = "#34d399";
+                        }
+                    }
+                });
+        }
+
+        function gotoPreset(num) {
+            fetch(`${API_BASE}/cgi-bin/ptz?dir=preset_goto&num=${num}`)
+                .then(r => r.json())
+                .then(res => {
+                    if (res.status === "ok") showToast(res.message);
+                    else showToast(res.message, "error");
+                });
+        }
+
+        // --- OSD POSITIONING & INTERACTIVE MARKERS ---
+        const cornerOrder = ["TopLeft", "TopRight", "BottomRight", "BottomLeft"];
+
+        function cycleOsdCorner(type) {
+            const selectId = (type === "time") ? "set-osd-time-pos" : "set-osd-title-pos";
+            const sel = document.getElementById(selectId);
+            if (!sel) return;
+
+            const currIdx = cornerOrder.indexOf(sel.value);
+            const nextIdx = (currIdx + 1) % cornerOrder.length;
+            sel.value = cornerOrder[nextIdx];
+            updateOsdPreviewMarkers();
+            showToast(`Положение «${type === "time" ? "Дата" : "Имя"}» переключено на: ${sel.options[sel.selectedIndex].text}`);
+        }
+
+        function updateOsdPreviewMarkers() {
+            const timePos = document.getElementById("set-osd-time-pos").value;
+            const titlePos = document.getElementById("set-osd-title-pos").value;
+            const timeEnable = document.getElementById("set-osd-time").checked;
+            const titleEnable = document.getElementById("set-osd-title").checked;
+            const titleText = document.getElementById("set-osd-name").value || "CleanCam";
+
+            const markerTime = document.getElementById("marker-osd-time");
+            const markerTitle = document.getElementById("marker-osd-title");
+            const markerTitleText = document.getElementById("marker-title-text");
+
+            if (markerTitleText) markerTitleText.innerText = titleText;
+
+            if (markerTime) {
+                markerTime.className = `osd-marker-tag time pos-${timePos}`;
+                markerTime.style.display = timeEnable ? "flex" : "none";
+            }
+            if (markerTitle) {
+                markerTitle.className = `osd-marker-tag title pos-${titlePos}`;
+                markerTitle.style.display = titleEnable ? "flex" : "none";
+            }
+        }
+
+        // --- LOAD & APPLY ALL CAMERA SETTINGS ---
+        function loadAllSettings() {
+            fetch(`${API_BASE}/cgi-bin/camera_ctrl?cmd=get`)
+                .then(r => r.json())
+                .then(cfg => {
+                    // Sensor & Color
+                    if (cfg.brightness !== undefined) { document.getElementById("set-brightness").value = cfg.brightness; document.getElementById("val-brightness").innerText = cfg.brightness; }
+                    if (cfg.contrast !== undefined) { document.getElementById("set-contrast").value = cfg.contrast; document.getElementById("val-contrast").innerText = cfg.contrast; }
+                    if (cfg.saturation !== undefined) { document.getElementById("set-saturation").value = cfg.saturation; document.getElementById("val-saturation").innerText = cfg.saturation; }
+                    if (cfg.hue !== undefined) { document.getElementById("set-hue").value = cfg.hue; document.getElementById("val-hue").innerText = cfg.hue; }
+                    if (cfg.sharpness !== undefined) { document.getElementById("set-sharpness").value = cfg.sharpness; document.getElementById("val-sharpness").innerText = cfg.sharpness; }
+                    if (cfg.wdr_gain !== undefined) { document.getElementById("set-wdr-gain").value = cfg.wdr_gain; document.getElementById("val-wdr-gain").innerText = cfg.wdr_gain; }
+                    if (cfg.anti_flicker) document.getElementById("set-anti-flicker").value = cfg.anti_flicker;
+                    if (cfg.wdr) document.getElementById("set-wdr").value = cfg.wdr;
+                    if (cfg.style) document.getElementById("set-style").value = cfg.style;
+                    if (cfg.hlc !== undefined) document.getElementById("set-hlc").value = cfg.hlc;
+                    if (cfg.white_balance) document.getElementById("set-white-balance").value = cfg.white_balance;
+                    document.getElementById("set-flip").checked = (cfg.flip == 1 || cfg.flip === true);
+                    document.getElementById("set-mirror").checked = (cfg.mirror == 1 || cfg.mirror === true);
+
+                    // Night & Lighting
+                    if (cfg.daynight) document.getElementById("set-daynight").value = cfg.daynight;
+                    if (cfg.denoise) document.getElementById("set-denoise").value = cfg.denoise;
+                    if (cfg.dnc_threshold !== undefined) { document.getElementById("set-dnc-thr").value = cfg.dnc_threshold; document.getElementById("val-dnc-thr").innerText = cfg.dnc_threshold; }
+                    if (cfg.whitelight_mode) document.getElementById("set-whitelight-mode").value = cfg.whitelight_mode;
+                    if (cfg.whitelight_brightness !== undefined) { document.getElementById("set-wl-bright").value = cfg.whitelight_brightness; document.getElementById("val-wl-bright").innerText = cfg.whitelight_brightness; }
+                    if (cfg.whitelight_duration !== undefined) { document.getElementById("set-wl-dur").value = cfg.whitelight_duration; document.getElementById("val-wl-dur").innerText = cfg.whitelight_duration; }
+
+                    // Video Streams
+                    if (cfg.compression) document.getElementById("set-compression").value = cfg.compression;
+                    if (cfg.fps) document.getElementById("set-fps").value = cfg.fps;
+                    if (cfg.bitrate) document.getElementById("set-bitrate").value = cfg.bitrate;
+                    if (cfg.bitrate_control) document.getElementById("set-bitrate-ctrl").value = cfg.bitrate_control;
+                    if (cfg.gop) document.getElementById("set-gop").value = cfg.gop;
+                    document.getElementById("set-sub-enable").checked = (cfg.sub_enable !== false);
+                    if (cfg.sub_resolution) document.getElementById("set-sub-res").value = cfg.sub_resolution;
+                    if (cfg.sub_fps) document.getElementById("set-sub-fps").value = cfg.sub_fps;
+                    if (cfg.sub_bitrate) document.getElementById("set-sub-bitrate").value = cfg.sub_bitrate;
+
+                    // OSD & Audio
+                    document.getElementById("set-osd-time").checked = (cfg.osd_time !== false);
+                    if (cfg.osd_time_pos) document.getElementById("set-osd-time-pos").value = cfg.osd_time_pos;
+                    document.getElementById("set-osd-title").checked = (cfg.osd_title !== false);
+                    if (cfg.osd_title_pos) document.getElementById("set-osd-title-pos").value = cfg.osd_title_pos;
+                    if (cfg.osd_name) document.getElementById("set-osd-name").value = cfg.osd_name;
+                    document.getElementById("set-audio-enable").checked = (cfg.audio_enable !== false);
+                    if (cfg.mic_volume !== undefined) { document.getElementById("set-mic-vol").value = cfg.mic_volume; document.getElementById("val-mic-vol").innerText = cfg.mic_volume; }
+                    if (cfg.spk_volume !== undefined) { document.getElementById("set-spk-vol").value = cfg.spk_volume; document.getElementById("val-spk-vol").innerText = cfg.spk_volume; }
+
+                    // Motion & Tracking
+                    document.getElementById("set-motion-enable").checked = (cfg.motion_enable !== false);
+                    if (cfg.motion_sensitivity) document.getElementById("set-motion-sens").value = cfg.motion_sensitivity;
+                    document.getElementById("set-motion-beep").checked = (cfg.motion_beep === true);
+                    document.getElementById("set-track-enable").checked = (cfg.track_enable === true);
+                    if (cfg.track_sensitivity) document.getElementById("set-track-sens").value = cfg.track_sensitivity;
+                    if (cfg.track_return_time !== undefined) { document.getElementById("set-track-ret").value = cfg.track_return_time; document.getElementById("val-track-ret").innerText = cfg.track_return_time; }
+
+                    // System
+                    if (cfg.device_name) document.getElementById("set-device-name").value = cfg.device_name;
+                    if (cfg.current_time) document.getElementById("cam-current-time").innerText = cfg.current_time;
+
+                    updateOsdPreviewMarkers();
+                    showToast("Параметры камеры успешно загружены!");
+                })
+                .catch(() => {});
+        }
+
+        function applyAllSettings() {
+            const params = new URLSearchParams({
+                cmd: "set",
+                // Sensor
+                brightness: document.getElementById("set-brightness").value,
+                contrast: document.getElementById("set-contrast").value,
+                saturation: document.getElementById("set-saturation").value,
+                hue: document.getElementById("set-hue").value,
+                sharpness: document.getElementById("set-sharpness").value,
+                wdr_gain: document.getElementById("set-wdr-gain").value,
+                anti_flicker: document.getElementById("set-anti-flicker").value,
+                wdr: document.getElementById("set-wdr").value,
+                style: document.getElementById("set-style").value,
+                hlc: document.getElementById("set-hlc").value,
+                white_balance: document.getElementById("set-white-balance").value,
+                flip: document.getElementById("set-flip").checked ? 1 : 0,
+                mirror: document.getElementById("set-mirror").checked ? 1 : 0,
+
+                // Night
+                daynight: document.getElementById("set-daynight").value,
+                denoise: document.getElementById("set-denoise").value,
+                dnc_threshold: document.getElementById("set-dnc-thr").value,
+                whitelight_mode: document.getElementById("set-whitelight-mode").value,
+                whitelight_brightness: document.getElementById("set-wl-bright").value,
+                whitelight_duration: document.getElementById("set-wl-dur").value,
+
+                // Video
+                compression: document.getElementById("set-compression").value,
+                fps: document.getElementById("set-fps").value,
+                bitrate: document.getElementById("set-bitrate").value,
+                bitrate_control: document.getElementById("set-bitrate-ctrl").value,
+                gop: document.getElementById("set-gop").value,
+                sub_enable: document.getElementById("set-sub-enable").checked ? "true" : "false",
+                sub_resolution: document.getElementById("set-sub-res").value,
+                sub_fps: document.getElementById("set-sub-fps").value,
+                sub_bitrate: document.getElementById("set-sub-bitrate").value,
+
+                // OSD & Audio
+                osd_time: document.getElementById("set-osd-time").checked ? "true" : "false",
+                osd_time_pos: document.getElementById("set-osd-time-pos").value,
+                osd_title: document.getElementById("set-osd-title").checked ? "true" : "false",
+                osd_title_pos: document.getElementById("set-osd-title-pos").value,
+                osd_name: document.getElementById("set-osd-name").value,
+                audio_enable: document.getElementById("set-audio-enable").checked ? "true" : "false",
+                mic_volume: document.getElementById("set-mic-vol").value,
+                spk_volume: document.getElementById("set-spk-vol").value,
+
+                // Motion & Track
+                motion_enable: document.getElementById("set-motion-enable").checked ? "true" : "false",
+                motion_sensitivity: document.getElementById("set-motion-sens").value,
+                motion_beep: document.getElementById("set-motion-beep").checked ? "true" : "false",
+                track_enable: document.getElementById("set-track-enable").checked ? "true" : "false",
+                track_sensitivity: document.getElementById("set-track-sens").value,
+                track_return_time: document.getElementById("set-track-ret").value,
+
+                // System
+                device_name: document.getElementById("set-device-name").value
+            });
+
+            fetch(`${API_BASE}/cgi-bin/camera_ctrl?${params.toString()}`)
+                .then(r => r.json())
+                .then(res => {
+                    showToast(res.message || "Настройки успешно применены!");
+                })
+                .catch(() => showToast("Параметры отправлены камере!", "success"));
+        }
+
+        // --- TIME & SYSTEM ---
+        function syncBrowserTime() {
+            const now = new Date();
+            const y = now.getFullYear();
+            const m = String(now.getMonth() + 1).padStart(2, "0");
+            const d = String(now.getDate()).padStart(2, "0");
+            const h = String(now.getHours()).padStart(2, "0");
+            const mi = String(now.getMinutes()).padStart(2, "0");
+            const s = String(now.getSeconds()).padStart(2, "0");
+            const timeStr = `${y}-${m}-${d} ${h}:${mi}:${s}`;
+
+            fetch(`${API_BASE}/cgi-bin/camera_ctrl?cmd=set_time&time=${encodeURIComponent(timeStr)}`)
+                .then(r => r.json())
+                .then(res => {
+                    document.getElementById("cam-current-time").innerText = timeStr;
+                    showToast(res.message || "Время камеры успешно синхронизировано!");
+                });
+        }
+
+        function confirmReboot() {
+            if (confirm("Вы действительно хотите перезагрузить камеру?")) {
+                fetch(`${API_BASE}/cgi-bin/camera_ctrl?cmd=reboot`)
+                    .then(() => {
+                        showToast("Камера перезагружается. Подождите 15 секунд...", "warning");
+                        setTimeout(() => location.reload(), 15000);
+                    });
+            }
+        }
+
+        // --- WI-FI MANAGER & DUAL RTSP STREAM URLS ---
+        function updateStatus() {
+            fetch(`${API_BASE}/cgi-bin/status`)
+                .then(r => r.json())
+                .then(data => {
+                    const badge = document.getElementById("status-badge");
+                    const text = document.getElementById("status-text");
+                    const ip = data.ip || window.location.hostname;
+                    
+                    if (data.mode === "AccessPoint" || ip === "192.168.10.1") {
+                        badge.className = "status-badge ap";
+                        text.innerText = `Точка доступа: CleanCam_Setup (${ip})`;
+                    } else {
+                        badge.className = "status-badge client";
+                        text.innerText = `Wi-Fi: ${data.ssid || "Подключено"} (${ip})`;
+                    }
+
+                    if (ip && ip !== "127.0.0.1") {
+                        document.getElementById("rtsp-main").innerText = `rtsp://${ip}:554/live/ch0`;
+                        document.getElementById("rtsp-sub").innerText = `rtsp://${ip}:554/live/ch1`;
+                        document.getElementById("rtsp-stream0").innerText = `rtsp://${ip}:554/stream0`;
+                        document.getElementById("rtsp-stream1").innerText = `rtsp://${ip}:554/stream1`;
+                        document.getElementById("onvif-url").innerText = `http://${ip}:8899/onvif/device_service`;
+                        document.getElementById("snap-url").innerText = `http://${ip}:8080/cgi-bin/snapshot`;
+                    }
+                })
+                .catch(() => {});
+        }
+
+        function scanWifi() {
+            const btn = document.getElementById("btn-scan");
+            const spinner = document.getElementById("scan-spinner");
+            const list = document.getElementById("wifi-list");
+
+            btn.disabled = true;
+            spinner.innerText = "⏳";
+            list.innerHTML = `<div style="text-align: center; color: var(--accent); padding: 14px;">Сканирование эфира Wi-Fi...</div>`;
+
+            fetch(`${API_BASE}/cgi-bin/wifi_scan`)
+                .then(r => r.json())
+                .then(networks => {
+                    btn.disabled = false;
+                    spinner.innerText = "🔍";
+
+                    if (!Array.isArray(networks) || networks.length === 0) {
+                        list.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 14px;">Сети не найдены.</div>`;
+                        return;
+                    }
+
+                    networks.sort((a, b) => (b.signal || 0) - (a.signal || 0));
+                    list.innerHTML = "";
+
+                    networks.forEach(net => {
+                        const item = document.createElement("div");
+                        item.className = "wifi-item";
+                        item.setAttribute("data-ssid", net.ssid);
+                        item.onclick = () => {
+                            document.getElementById("ssid-input").value = net.ssid;
+                            document.querySelectorAll(".wifi-item").forEach(i => i.classList.toggle("selected", i.getAttribute("data-ssid") === net.ssid));
+                            document.getElementById("pass-input").focus();
+                        };
+                        item.innerHTML = `
+                            <span><strong>${net.ssid}</strong> (${net.security || "WPA2"})</span>
+                            <span style="color: var(--accent); font-weight: 600;">${net.signal}% 📶</span>
+                        `;
+                        list.appendChild(item);
+                    });
+                })
+                .catch(() => {
+                    btn.disabled = false;
+                    spinner.innerText = "🔍";
+                    list.innerHTML = `<div style="text-align: center; color: var(--danger); padding: 14px;">Ошибка сканирования.</div>`;
+                });
+        }
+
+        function connectWifi(e) {
+            e.preventDefault();
+            const ssid = document.getElementById("ssid-input").value.trim();
+            const password = document.getElementById("pass-input").value;
+            const btn = document.getElementById("btn-connect");
+
+            if (!ssid) {
+                showToast("Укажите SSID сети!", "error");
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerText = "Подключение...";
+
+            fetch(`${API_BASE}/cgi-bin/wifi_connect`, {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: `ssid=${encodeURIComponent(ssid)}&password=${encodeURIComponent(password)}`
+            })
+            .then(r => r.json())
+            .then(res => {
+                btn.disabled = false;
+                btn.innerText = "Подключить камеру к Wi-Fi";
+                showToast(res.message || "Команда отправлена. Камера подключается к сети.", "success");
+                setTimeout(updateStatus, 8000);
+            })
+            .catch(() => {
+                btn.disabled = false;
+                btn.innerText = "Подключить камеру к Wi-Fi";
+                showToast("Команда отправлена.", "success");
+            });
+        }
+
+        // Initialize Authentication & App
+        checkAuth();
+        setInterval(updateStatus, 10000);
+    </script>
+</body>
+</html>
+'''
+
+with open("build_clean/web-x/index.html", "w", encoding="utf-8") as f:
+    f.write(html_content)
+
+print(f"Successfully generated build_clean/web-x/index.html ({len(html_content)} bytes)")

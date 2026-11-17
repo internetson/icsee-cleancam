@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ICSee Camera Web Control & PTZ</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --panel-bg: #1e293b;
+            --panel-border: #334155;
+            --accent: #38bdf8;
+            --accent-hover: #0ea5e9;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+            --btn-active: #2563eb;
+            --danger: #ef4444;
+            --success: #22c55e;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background: var(--bg-color); color: var(--text); padding: 20px; display: flex; justify-content: center; }
+        .container { width: 100%; max-width: 1000px; display: flex; flex-direction: column; gap: 20px; }
+        header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 15px; border-bottom: 1px solid var(--panel-border); }
+        h1 { font-size: 1.5rem; display: flex; align-items: center; gap: 10px; }
+        .badge { background: #0369a1; color: #bae6fd; font-size: 0.75rem; padding: 4px 8px; border-radius: 6px; font-weight: 600; }
+        .grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
+        @media (min-width: 768px) { .grid { grid-template-columns: 3fr 2fr; } }
+        
+        .card { background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px; padding: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+        .card-title { font-size: 1.1rem; margin-bottom: 15px; color: var(--accent); font-weight: 600; display: flex; justify-content: space-between; }
+
+        /* Video Area */
+        .video-box { background: #000; border-radius: 8px; aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; border: 1px solid #475569; }
+        .video-placeholder { text-align: center; color: var(--text-muted); }
+        .video-placeholder p { margin-top: 10px; font-size: 0.9rem; }
+
+        /* PTZ Controls */
+        .ptz-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; max-width: 260px; margin: 0 auto; }
+        .ptz-btn { background: #334155; border: none; border-radius: 10px; color: var(--text); font-size: 1.4rem; padding: 18px 0; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; justify-content: center; }
+        .ptz-btn:hover { background: #475569; transform: translateY(-2px); }
+        .ptz-btn:active { background: var(--btn-active); transform: scale(0.95); }
+        .ptz-center { background: #1e293b; border: 2px dashed #475569; font-size: 0.85rem; color: var(--text-muted); }
+
+        .slider-group { margin-top: 15px; }
+        .slider-label { display: flex; justify-content: space-between; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 5px; }
+        input[type="range"] { width: 100%; accent-color: var(--accent); height: 6px; background: #334155; border-radius: 4px; outline: none; }
+
+        /* Settings */
+        .btn-group { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 15px; }
+        .btn { flex: 1; min-width: 80px; padding: 10px 14px; background: #334155; color: var(--text); border: 1px solid transparent; border-radius: 8px; font-size: 0.85rem; cursor: pointer; transition: all 0.2s; text-align: center; }
+        .btn:hover { background: #475569; }
+        .btn.active { background: var(--accent); color: #0f172a; font-weight: bold; }
+
+        /* Info box */
+        .info-box { background: #0f172a; border-radius: 8px; padding: 12px; font-family: monospace; font-size: 0.85rem; color: #a5f3fc; border: 1px solid #1e3a5f; margin-top: 10px; word-break: break-all; }
+
+        .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--success); margin-right: 6px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1><span class="status-dot"></span>ICSee PTZ Control Hub</h1>
+            <span class="badge">GK7201V300 / SSV6158M</span>
+        </header>
+
+        <div class="grid">
+            <!-- Left: Video & Stream Info -->
+            <div style="display: flex; flex-direction: column; gap: 20px;">
+                <div class="card">
+                    <div class="card-title">
+                        <span>Живой просмотр (Live Stream)</span>
+                        <span style="font-size: 0.8rem; color: var(--text-muted);">go2rtc / WebRTC</span>
+                    </div>
+                    <div class="video-box" id="player">
+                        <div class="video-placeholder">
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                            </svg>
+                            <p>Для просмотра подключите go2rtc или RTSP плеер</p>
+                            <p style="font-size: 0.75rem; color: #64748b; margin-top: 4px;">RTSP порт: 8554 | NetIP порт: 34567</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">RTSP & ONVIF Ссылки</div>
+                    <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 8px;">Используйте для добавления в Home Assistant, VLC, Frigate, NVR:</p>
+                    <div class="info-box" id="rtsp-url">rtsp://camera_ip:8554/icsee_camera</div>
+                    <div class="info-box" style="margin-top: 8px; color: #fed7aa;" id="onvif-url">onvif://camera_ip:8899/onvif/device_service</div>
+                </div>
+            </div>
+
+            <!-- Right: PTZ & Camera Settings -->
+            <div style="display: flex; flex-direction: column; gap: 20px;">
+                <!-- PTZ Pad -->
+                <div class="card">
+                    <div class="card-title">Управление PTZ (Поворот/Наклон)</div>
+                    <div class="ptz-grid">
+                        <button class="ptz-btn" onclick="sendPtz('DirectionUpLeft')">↖</button>
+                        <button class="ptz-btn" onclick="sendPtz('DirectionUp')">▲</button>
+                        <button class="ptz-btn" onclick="sendPtz('DirectionUpRight')">↗</button>
+                        <button class="ptz-btn" onclick="sendPtz('DirectionLeft')">◀</button>
+                        <button class="ptz-btn ptz-center" onclick="sendPtz('Stop')">STOP</button>
+                        <button class="ptz-btn" onclick="sendPtz('DirectionRight')">▶</button>
+                        <button class="ptz-btn" onclick="sendPtz('DirectionDownLeft')">↙</button>
+                        <button class="ptz-btn" onclick="sendPtz('DirectionDown')">▼</button>
+                        <button class="ptz-btn" onclick="sendPtz('DirectionDownRight')">↘</button>
+                    </div>
+
+                    <div class="slider-group">
+                        <div class="slider-label">
+                            <span>Скорость / Шаг (Speed)</span>
+                            <span id="step-val">4</span>
+                        </div>
+                        <input type="range" id="step-slider" min="1" max="8" value="4" oninput="document.getElementById('step-val').innerText = this.value">
+                    </div>
+                </div>
+
+                <!-- Night Vision & Lighting -->
+                <div class="card">
+                    <div class="card-title">Ночной режим & Подсветка</div>
+                    
+                    <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 8px;">Режим ночного видения (Day/Night Color):</p>
+                    <div class="btn-group">
+                        <button class="btn active" id="btn-dual" onclick="setImageMode('dual', this)">Умный (Dual)</button>
+                        <button class="btn" id="btn-bw" onclick="setImageMode('bw', this)">ИК (Ч/Б)</button>
+                        <button class="btn" id="btn-color" onclick="setImageMode('color', this)">Цветной</button>
+                        <button class="btn" id="btn-auto" onclick="setImageMode('auto', this)">Авто</button>
+                    </div>
+
+                    <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 8px;">Белый LED прожектор:</p>
+                    <div class="btn-group">
+                        <button class="btn" onclick="setLight('Open')">Вкл</button>
+                        <button class="btn" onclick="setLight('Close')">Выкл</button>
+                        <button class="btn active" onclick="setLight('Auto')">Авто (при движении)</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function sendPtz(direction) {
+            const step = parseInt(document.getElementById('step-slider').value);
+            fetch('/api/ptz', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ direction: direction, step: step, duration: 0.35 })
+            }).then(r => r.json()).then(data => {
+                console.log('PTZ:', data);
+            }).catch(e => console.error('PTZ Error:', e));
+        }
+
+        function setImageMode(mode, el) {
+            document.querySelectorAll('.btn-group .btn').forEach(b => b.classList.remove('active'));
+            if (el) el.classList.add('active');
+            const modesMap = {
+                'color': '0x00000000',
+                'bw': '0x00000001',
+                'auto': '0x00000002',
+                'dual': '0x00000003'
+            };
+            fetch('/api/image', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ night_mode: modesMap[mode], dnc_thr: 30 })
+            }).then(r => r.json()).then(console.log);
+        }
+
+        function setLight(mode) {
+            fetch('/api/light', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ mode: mode })
+            }).then(r => r.json()).then(console.log);
+        }
+
+        // Fetch camera info on load
+        fetch('/api/status').then(r => r.json()).then(data => {
+            if (data.camera_ip) {
+                document.getElementById('rtsp-url').innerText = `rtsp://${data.camera_ip}:8554/icsee_camera`;
+                document.getElementById('onvif-url').innerText = `onvif://${data.camera_ip}:8899/onvif/device_service`;
+            }
+        });
+    </script>
+</body>
+</html>

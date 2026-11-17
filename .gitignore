@@ -1,0 +1,67 @@
+# CleanCam OS - .gitignore
+
+# Компиляторы и внешние тулчейны
+tools/zig/
+tools/squashfs-tools/
+tools/guiformat.exe
+
+# Каталоги сборки и дистрибутивов
+dist/
+output_firmware/
+extracted/
+firmware/
+sd_card/
+
+# Образы файловых систем и прошивок
+*.squashfs
+*.squashfs.img
+*.bin
+build_clean/custom-x.squashfs*
+build_clean/web-x.squashfs*
+build_clean/cgi-bin.tar.gz
+build_clean/*_pf.txt
+build_clean/user-x/
+sd_card_installer/*.squashfs*
+sd_card_installer/user-x*
+
+# Логи и временные файлы
+*.log
+out.txt
+*.tmp
+
+# Тестовые медиафайлы и дампы потоков
+*.h265
+*.h264
+*.mp4
+*.hevc
+snapshot.jpg
+test_*.jpg
+test_*.png
+test_*.mp4
+test_*.bin
+test_*.h265
+
+# Тестовые бинарники и утилиты
+hello*
+test_go*
+tools/test_dl
+tools/test_setcfg
+tools/check_reset_key
+tools/test_bind
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+# IDE и операционная система
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini

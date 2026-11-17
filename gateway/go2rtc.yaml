@@ -1,0 +1,29 @@
+# go2rtc configuration for ICSee / Xiongmai DVRIP camera
+# Converts proprietary NetIP/DVRIP (port 34567) into RTSP, ONVIF, WebRTC, and Home Assistant streams.
+
+streams:
+  icsee_camera:
+    # DVRIP stream directly from camera (zero lag, native H.265/H.264)
+    # Replace CAMERA_IP with your camera's IP address.
+    # If a password is set, use: dvr://admin:PASSWORD@CAMERA_IP:34567
+    - dvr://admin:@CAMERA_IP:34567?channel=0&subtype=0
+
+  icsee_sub:
+    # Sub-stream (low resolution / D1 for mobile or multi-view)
+    - dvr://admin:@CAMERA_IP:34567?channel=0&subtype=1
+
+api:
+  listen: ":1984"
+
+rtsp:
+  listen: ":8554"
+
+webrtc:
+  listen: ":8555"
+
+# ONVIF Server Emulation with PTZ
+onvif:
+  listen: ":8899"
+  # Streams exposed over ONVIF
+  streams:
+    - icsee_camera
