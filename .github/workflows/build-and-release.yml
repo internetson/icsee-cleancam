@@ -1,0 +1,110 @@
+name: CleanCam OS Build & Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Создать GitHub Release (true/false)'
+        required: false
+        default: 'true'
+        type: boolean
+      tag_name:
+        description: 'Имя тега релиза (например v1.0.0)'
+        required: false
+        default: 'v1.0.0'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Сборка прошивки CleanCam OS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Клонирование репозитория
+        uses: actions/checkout@v4
+
+      - name: Установка зависимостей окружения
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools python3 python3-pip
+
+      - name: Установка компилятора Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+
+      - name: Проверка версий инструментов
+        run: |
+          zig version
+          mksquashfs -version
+          python3 --version
+
+      - name: Сборка бинарников и образов CleanCam
+        run: |
+          python3 build.py
+
+      - name: Проверка содержимого каталога dist/
+        run: |
+          ls -lh dist/
+
+      - name: Сохранение артефактов сборки
+        uses: actions/upload-artifact@v4
+        with:
+          name: cleancam-build-artifacts
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Публикация GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || github.event.inputs.tag_name }}
+          name: CleanCam OS ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || github.event.inputs.tag_name }}
+          body: |
+            ## CleanCam OS — Релиз кастомной прошивки для ICSee (GK7201V300)
+
+            Полностью очищенная прошивка для Wi-Fi камер Xiongmai / ICSee:
+            - **Двухпоточный RTSP сервер**:
+              - Основной (1080p HEVC): `rtsp://<IP>:554/live/ch0`
+              - Дополнительный (D1 HEVC): `rtsp://<IP>:554/live/ch1`
+            - **Полноценный ONVIF 2.0 / PTZ**:
+              - WS-Discovery (порт 3702 UDP)
+              - ONVIF Service (порт 8899)
+              - Полная поддержка NVR, Frigate (автослежение, детекция) и ONVIF Device Manager
+            - **Современный адаптивный WebUI (порт 80)**:
+              - Просмотр превью, джойстик PTZ и стрелки клавиатуры
+              - Интерактивное перемещение OSD и штампа даты мышью
+              - 16 слотов пресетов, сканер Wi-Fi сетей
+              - Авторизация (`admin/admin` по умолчанию) и смена пароля
+              - Интеграция с Home Assistant (CGI API для ИК и белой подсветки)
+            - **Кнопка Reset**:
+              - Удержание 10 секунд сбрасывает сетевые настройки и пароль к заводским.
+            - **Полный Root-доступ**:
+              - Telnet на порту 23 (логин `root`, без пароля).
+
+            ### Установка:
+            1. Скачайте `cleancam_sd_installer.zip`.
+            2. Распакуйте содержимое архива в корень MicroSD карты (FAT32).
+            3. Вставьте карту в выключенную камеру и включите питание.
+            4. Дождитесь автоматической прошивки (~30 сек) и извлеките карту.
+          files: |
+            dist/cleancam_sd_installer.zip
+            dist/custom-x.squashfs
+            dist/web-x.squashfs
+            dist/custom-x.squashfs.img
+            dist/web-x.squashfs.img
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
