@@ -1,9 +1,8 @@
 # CleanCam OS - .gitignore
 
 # Компиляторы и внешние тулчейны
-tools/zig/
-tools/squashfs-tools/
-tools/guiformat.exe
+tools/
+scripts/squashfs-tools/
 
 # Каталоги сборки и дистрибутивов
 dist/

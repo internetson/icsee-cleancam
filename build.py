@@ -11,7 +11,8 @@ import subprocess
 import zipfile
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TOOLS_DIR = os.path.join(BASE_DIR, "tools")
+SRC_DIR = os.path.join(BASE_DIR, "src")
+SCRIPTS_DIR = os.path.join(BASE_DIR, "scripts")
 BUILD_DIR = os.path.join(BASE_DIR, "build_clean")
 DIST_DIR = os.path.join(BASE_DIR, "dist")
 SD_INSTALLER_DIR = os.path.join(BASE_DIR, "sd_card_installer")
@@ -22,8 +23,8 @@ def find_zig():
     if shutil.which("zig"):
         return "zig"
     for candidate in [
-        os.path.join(TOOLS_DIR, "zig", "zig.exe"),
-        os.path.join(TOOLS_DIR, "zig", "zig"),
+        os.path.join(BASE_DIR, "tools", "zig", "zig.exe"),
+        os.path.join(BASE_DIR, "tools", "zig", "zig"),
     ]:
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
@@ -56,31 +57,31 @@ def compile_binaries(zig_path):
     
     targets = [
         {
-            "src": os.path.join(TOOLS_DIR, "xm_rtspd.c"),
+            "src": os.path.join(SRC_DIR, "xm_rtspd.c"),
             "out": os.path.join(BUILD_DIR, "custom-x", "xm_rtspd"),
             "extra_args": ["-lpthread"],
             "name": "xm_rtspd (RTSP + ONVIF демон)"
         },
         {
-            "src": os.path.join(TOOLS_DIR, "xm_auth.c"),
+            "src": os.path.join(SRC_DIR, "xm_auth.c"),
             "out": os.path.join(BUILD_DIR, "web-x", "cgi-bin", "auth"),
             "extra_args": [],
             "name": "auth (CGI авторизации)"
         },
         {
-            "src": os.path.join(TOOLS_DIR, "xm_resetd.c"),
+            "src": os.path.join(SRC_DIR, "xm_resetd.c"),
             "out": os.path.join(BUILD_DIR, "custom-x", "xm_resetd"),
             "extra_args": [],
             "name": "xm_resetd (Демон кнопки Reset)"
         },
         {
-            "src": os.path.join(TOOLS_DIR, "xm_snap.c"),
+            "src": os.path.join(SRC_DIR, "xm_snap.c"),
             "out": os.path.join(BUILD_DIR, "custom-x", "xm_snap"),
             "extra_args": [],
             "name": "xm_snap (Снимок кадра)"
         },
         {
-            "src": os.path.join(TOOLS_DIR, "xm_setcfg.c"),
+            "src": os.path.join(SRC_DIR, "xm_setcfg.c"),
             "out": os.path.join(BUILD_DIR, "custom-x", "xm_setcfg"),
             "extra_args": [],
             "name": "xm_setcfg (Настройка параметров сенсора)"
@@ -109,7 +110,7 @@ def build_images():
     print("2. Сборка образов SquashFS и U-Boot")
     print("=" * 60)
     
-    script = os.path.join(TOOLS_DIR, "build_clean_images.py")
+    script = os.path.join(SCRIPTS_DIR, "build_clean_images.py")
     res = subprocess.run([sys.executable, script])
     if res.returncode != 0:
         print("[-] Ошибка при сборке образов SquashFS")

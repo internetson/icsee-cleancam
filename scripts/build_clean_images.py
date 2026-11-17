@@ -6,6 +6,8 @@ BUILD_DIR = os.path.join(BASE_DIR, "build_clean")
 mksquashfs_env = shutil.which("mksquashfs")
 if mksquashfs_env:
     MKSQUASHFS = mksquashfs_env
+elif os.path.exists(os.path.join(BASE_DIR, "scripts", "squashfs-tools", "mksquashfs.exe")):
+    MKSQUASHFS = os.path.join(BASE_DIR, "scripts", "squashfs-tools", "mksquashfs.exe")
 elif os.path.exists(os.path.join(BASE_DIR, "tools", "squashfs-tools", "mksquashfs.exe")):
     MKSQUASHFS = os.path.join(BASE_DIR, "tools", "squashfs-tools", "mksquashfs.exe")
 else:
@@ -14,6 +16,8 @@ else:
 unsquashfs_env = shutil.which("unsquashfs")
 if unsquashfs_env:
     UNSQUASHFS = unsquashfs_env
+elif os.path.exists(os.path.join(BASE_DIR, "scripts", "squashfs-tools", "unsquashfs.exe")):
+    UNSQUASHFS = os.path.join(BASE_DIR, "scripts", "squashfs-tools", "unsquashfs.exe")
 elif os.path.exists(os.path.join(BASE_DIR, "tools", "squashfs-tools", "unsquashfs.exe")):
     UNSQUASHFS = os.path.join(BASE_DIR, "tools", "squashfs-tools", "unsquashfs.exe")
 else:
