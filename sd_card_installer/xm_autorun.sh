@@ -112,6 +112,72 @@ EOF
     fi
 }
 
+restore_default_accounts() {
+    [ ! -d /mnt/mtd/Config ] && mount /dev/mtdblock5 /mnt/mtd 2>/dev/null
+    mkdir -p /mnt/mtd/Config 2>/dev/null
+    if [ ! -f /mnt/mtd/Config/Account1 ] || ! grep -q '"Name" : "admin"' /mnt/mtd/Config/Account1 2>/dev/null; then
+        echo "[*] Restoring clean default DVRIP accounts for xm_rtspd..." >> $LOG_FILE
+        cat << 'EOF' > /mnt/mtd/Config/Account1
+{
+   "Groups" : [
+      {
+         "AuthorityList" : [
+            "ShutDown", "ChannelTitle", "DefaultConfig", "Talk_01", "IPCCamera",
+            "ImExport", "Monitor_01", "EncodeConfig", "Account", "SysInfo",
+            "QueryLog", "DelLog", "SysUpgrade", "AutoMaintain", "GeneralConfig",
+            "NetConfig", "AlarmConfig", "VideoConfig", "RecordConfig", "StorageManager",
+            "Replay_01", "CommConfig", "PtzConfig", "PTZControl", "ElecPTZControl"
+         ],
+         "Memo" : "administrator group",
+         "Name" : "admin"
+      },
+      {
+         "AuthorityList" : [ "Monitor_01", "Replay_01" ],
+         "Memo" : "user group",
+         "Name" : "user"
+      }
+   ],
+   "Users" : [
+      {
+         "AuthorityList" : [
+            "ShutDown", "ChannelTitle", "DefaultConfig", "Talk_01", "IPCCamera",
+            "ImExport", "Monitor_01", "EncodeConfig", "Account", "SysInfo",
+            "QueryLog", "DelLog", "SysUpgrade", "AutoMaintain", "GeneralConfig",
+            "NetConfig", "AlarmConfig", "VideoConfig", "RecordConfig", "StorageManager",
+            "Replay_01", "CommConfig", "PtzConfig", "PTZControl", "ElecPTZControl"
+         ],
+         "BootTimes" : 100,
+         "Group" : "admin",
+         "Memo" : "admin account",
+         "Name" : "admin",
+         "Password" : "",
+         "Reserved" : true,
+         "Sharable" : true
+      },
+      {
+         "AuthorityList" : [
+            "ShutDown", "ChannelTitle", "DefaultConfig", "Talk_01", "IPCCamera",
+            "ImExport", "Monitor_01", "EncodeConfig", "Account", "SysInfo",
+            "QueryLog", "DelLog", "SysUpgrade", "AutoMaintain", "GeneralConfig",
+            "NetConfig", "AlarmConfig", "VideoConfig", "RecordConfig", "StorageManager",
+            "Replay_01", "CommConfig", "PtzConfig", "PTZControl", "ElecPTZControl"
+         ],
+         "BootTimes" : 100,
+         "Group" : "admin",
+         "Memo" : "camera account",
+         "Name" : "camera",
+         "Password" : "",
+         "Reserved" : false,
+         "Sharable" : true
+      }
+   ]
+}
+EOF
+        cp -f /mnt/mtd/Config/Account1 /mnt/mtd/Config/Account2 2>/dev/null
+        $BB sync 2>/dev/null || sync
+    fi
+}
+
 # 2. Check if clean v3 flash is required
 NEED_FLASH=0
 if [ ! -f "$SD_DIR/.clean_v3_done" ]; then
@@ -151,6 +217,7 @@ if [ "$NEED_FLASH" = "1" ]; then
     
     if [ "$FLASH_OK" = "1" ]; then
         provision_wifi "$SD_DIR"
+        restore_default_accounts
         touch "$SD_DIR/.clean_v3_done"
         $BB sync
         echo "[+] Flashing complete! Rebooting cleanly into new flash firmware..." >> $LOG_FILE
@@ -162,8 +229,9 @@ if [ "$NEED_FLASH" = "1" ]; then
     fi
 fi
 
-# Partitions are already flashed. Check if Wi-Fi needs provisioning or update.
+# Partitions are already flashed. Check if Wi-Fi or accounts need provisioning.
 provision_wifi "$SD_DIR"
+restore_default_accounts
 
 # Partitions are already flashed. Ensure services are running.
 if [ -x /mnt/custom/extapp.sh ]; then

@@ -33,8 +33,8 @@ static void do_factory_reset(void) {
     system("/mnt/custom/xm_setcfg 1040 '{\"Name\":\"Camera.WhiteLight\",\"Camera.WhiteLight\":{\"WorkMode\":\"Open\",\"Brightness\":100}}' >/dev/null 2>&1");
     system("echo 'ircut 1' > /proc/XmMotor 2>/dev/null; usleep 200000; echo 'ircut 0' > /proc/XmMotor 2>/dev/null;");
 
-    // Remove user configs: web password (resets to admin/admin), camera settings, PTZ presets, Wi-Fi configs
-    system("rm -f /mnt/mtd/Config/web_auth.json /mnt/mtd/Config/CameraSettings.json /mnt/mtd/Config/CameraSetting.json /mnt/mtd/Config/preset_*.txt /mnt/mtd/Config/wpa.conf /mnt/mtd/Config/wpa_supplicant.conf /mnt/mtd/Config/WLan /mnt/mtd/Config/PresetPos");
+    // Remove user configs: web password (resets to admin/admin), camera settings, PTZ presets, Wi-Fi configs, and accounts
+    system("rm -f /mnt/mtd/Config/web_auth.json /mnt/mtd/Config/CameraSettings.json /mnt/mtd/Config/CameraSetting.json /mnt/mtd/Config/preset_*.txt /mnt/mtd/Config/wpa.conf /mnt/mtd/Config/wpa_supplicant.conf /mnt/mtd/Config/WLan /mnt/mtd/Config/PresetPos /mnt/mtd/Config/Account1 /mnt/mtd/Config/Account2 /mnt/mtd/Config/.wifi_txt_last");
     system("sync");
 
     sleep(1);

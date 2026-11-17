@@ -22,9 +22,71 @@ fi
 # 3. Kill unwanted background cloud & conflicting wireless daemons
 killall -9 XmWlanDaemon XmWifiScan XmMobileDaemon Xm4gDialer XmBle_SsvApp_6158M 2>/dev/null
 
-# 4. Prepare ramfs
+# 4. Prepare ramfs & ensure clean accounts for DVRIP
 mkdir -p /var/tmp /var/run/hostapd /var/lib/misc /mnt/mtd/Config /mnt/mtd/Log /var/jpeg 2>/dev/null
 touch /var/lib/misc/udhcpd.leases /var/tmp/udhcpd.leases 2>/dev/null
+
+# Ensure default admin account exists for xm_rtspd (empty password)
+if [ ! -f /mnt/mtd/Config/Account1 ] || ! grep -q '"Name" : "admin"' /mnt/mtd/Config/Account1 2>/dev/null; then
+    cat << 'EOF' > /mnt/mtd/Config/Account1
+{
+   "Groups" : [
+      {
+         "AuthorityList" : [
+            "ShutDown", "ChannelTitle", "DefaultConfig", "Talk_01", "IPCCamera",
+            "ImExport", "Monitor_01", "EncodeConfig", "Account", "SysInfo",
+            "QueryLog", "DelLog", "SysUpgrade", "AutoMaintain", "GeneralConfig",
+            "NetConfig", "AlarmConfig", "VideoConfig", "RecordConfig", "StorageManager",
+            "Replay_01", "CommConfig", "PtzConfig", "PTZControl", "ElecPTZControl"
+         ],
+         "Memo" : "administrator group",
+         "Name" : "admin"
+      },
+      {
+         "AuthorityList" : [ "Monitor_01", "Replay_01" ],
+         "Memo" : "user group",
+         "Name" : "user"
+      }
+   ],
+   "Users" : [
+      {
+         "AuthorityList" : [
+            "ShutDown", "ChannelTitle", "DefaultConfig", "Talk_01", "IPCCamera",
+            "ImExport", "Monitor_01", "EncodeConfig", "Account", "SysInfo",
+            "QueryLog", "DelLog", "SysUpgrade", "AutoMaintain", "GeneralConfig",
+            "NetConfig", "AlarmConfig", "VideoConfig", "RecordConfig", "StorageManager",
+            "Replay_01", "CommConfig", "PtzConfig", "PTZControl", "ElecPTZControl"
+         ],
+         "BootTimes" : 100,
+         "Group" : "admin",
+         "Memo" : "admin account",
+         "Name" : "admin",
+         "Password" : "",
+         "Reserved" : true,
+         "Sharable" : true
+      },
+      {
+         "AuthorityList" : [
+            "ShutDown", "ChannelTitle", "DefaultConfig", "Talk_01", "IPCCamera",
+            "ImExport", "Monitor_01", "EncodeConfig", "Account", "SysInfo",
+            "QueryLog", "DelLog", "SysUpgrade", "AutoMaintain", "GeneralConfig",
+            "NetConfig", "AlarmConfig", "VideoConfig", "RecordConfig", "StorageManager",
+            "Replay_01", "CommConfig", "PtzConfig", "PTZControl", "ElecPTZControl"
+         ],
+         "BootTimes" : 100,
+         "Group" : "admin",
+         "Memo" : "camera account",
+         "Name" : "camera",
+         "Password" : "",
+         "Reserved" : false,
+         "Sharable" : true
+      }
+   ]
+}
+EOF
+    cp -f /mnt/mtd/Config/Account1 /mnt/mtd/Config/Account2 2>/dev/null
+    sync
+fi
 
 # Setup clean DHCP handler script
 if [ -f /mnt/custom/default.script ]; then
