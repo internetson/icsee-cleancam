@@ -263,34 +263,37 @@
                         <span>👤</span>
                         <strong id="user-display">admin</strong>
                     </div>
-                    <button class="btn-header" onclick="openPasswordModal()">🔑 Пароль</button>
-                    <button class="btn-header danger" onclick="handleLogout()">Выход</button>
+                    <button class="btn-header" id="btn-lang" onclick="toggleLang()" title="Switch Language / Сменить язык" style="font-weight: 700; min-width: 60px;">
+                        <span>🌐</span> <span id="lang-code">EN</span>
+                    </button>
+                    <button class="btn-header" onclick="openPasswordModal()" data-i18n="btn_password">🔑 Пароль</button>
+                    <button class="btn-header danger" onclick="handleLogout()" data-i18n="btn_logout">Выход</button>
                 </div>
             </div>
         </header>
 
         <!-- Navigation Tabs -->
         <nav class="nav-tabs">
-            <button class="tab-btn active" onclick="switchTab('tab-live')">📹 Прямой эфир & PTZ</button>
-            <button class="tab-btn" onclick="switchTab('tab-image')">🎨 Изображение и Сенсор</button>
-            <button class="tab-btn" onclick="switchTab('tab-night')">🌙 Ночь и Подсветка</button>
-            <button class="tab-btn" onclick="switchTab('tab-video')">⚙️ Видеопотоки & Кодеки</button>
-            <button class="tab-btn" onclick="switchTab('tab-osd-audio')">🏷️ OSD & Аудио</button>
-            <button class="tab-btn" onclick="switchTab('tab-detect')">🚨 Детекция & Слежение</button>
-            <button class="tab-btn" onclick="switchTab('tab-network')">📶 Wi-Fi & Потоки</button>
-            <button class="tab-btn" onclick="switchTab('tab-system')">🕒 Время & Система</button>
+            <button class="tab-btn active" onclick="switchTab('tab-live')" data-i18n="tab_live">📹 Прямой эфир & PTZ</button>
+            <button class="tab-btn" onclick="switchTab('tab-image')" data-i18n="tab_image">🎨 Изображение и Сенсор</button>
+            <button class="tab-btn" onclick="switchTab('tab-night')" data-i18n="tab_night">🌙 Ночь и Подсветка</button>
+            <button class="tab-btn" onclick="switchTab('tab-video')" data-i18n="tab_video">⚙️ Видеопотоки & Кодеки</button>
+            <button class="tab-btn" onclick="switchTab('tab-osd-audio')" data-i18n="tab_osd_audio">🏷️ OSD & Аудио</button>
+            <button class="tab-btn" onclick="switchTab('tab-detect')" data-i18n="tab_detect">🚨 Детекция & Слежение</button>
+            <button class="tab-btn" onclick="switchTab('tab-network')" data-i18n="tab_network">📶 Wi-Fi & Потоки</button>
+            <button class="tab-btn" onclick="switchTab('tab-system')" data-i18n="tab_system">🕒 Время & Система</button>
         </nav>
 
         <!-- TAB 1: LIVE VIEW & PTZ -->
         <div id="tab-live" class="tab-content active">
             <div class="card" style="padding: 14px;">
                 <div class="card-header">
-                    <div class="card-title">📹 Прямой просмотр (Live Stream)</div>
+                    <div class="card-title" data-i18n="card_live">📹 Прямой просмотр (Live Stream)</div>
                     <div style="display: flex; align-items: center; gap: 8px;">
                         <span id="live-fps" class="live-fps-badge" style="font-size: 0.78rem; color: var(--accent); font-family: monospace;">12 FPS</span>
-                        <button class="btn-scan" onclick="toggleLivePause()" id="btn-pause">⏸ Пауза</button>
-                        <button class="btn-scan" onclick="takeSnapshot()">📸 Снимок</button>
-                        <button class="btn-scan" onclick="toggleFullscreen()">⛶ Полный экран</button>
+                        <button class="btn-scan" onclick="toggleLivePause()" id="btn-pause" data-i18n="btn_pause">⏸ Пауза</button>
+                        <button class="btn-scan" onclick="takeSnapshot()" data-i18n="btn_snap">📸 Снимок</button>
+                        <button class="btn-scan" onclick="toggleFullscreen()" data-i18n="btn_fullscreen">⛶ Полный экран</button>
                     </div>
                 </div>
 
@@ -330,7 +333,7 @@
                         <!-- Quick Lights Bar -->
             <div class="card" style="margin-top: 10px; padding: 12px 16px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                    <div class="card-title" style="font-size: 0.88rem;">💡 Быстрое освещение и Ночной режим (Spotlight & IR)</div>
+                    <div class="card-title" style="font-size: 0.88rem;" data-i18n="card_spotlight">💡 Быстрое освещение и Ночной режим (Spotlight & IR)</div>
                     <span style="font-size: 0.72rem; color: var(--text-muted);">Home Assistant / REST API: <code>/cgi-bin/light</code></span>
                 </div>
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px;">
@@ -339,8 +342,8 @@
                         <div style="display: flex; align-items: center; gap: 8px;">
                             <span style="font-size: 1.15rem;">💡</span>
                             <div>
-                                <div style="font-size: 0.82rem; font-weight: 600; color: #f8fafc;">Белый фонарь</div>
-                                <div style="font-size: 0.68rem; color: var(--text-muted);">LED прожектор подсветки</div>
+                                <div style="font-size: 0.82rem; font-weight: 600; color: #f8fafc;" data-i18n="lbl_spotlight">Белый фонарь</div>
+                                <div style="font-size: 0.68rem; color: var(--text-muted);" data-i18n="desc_spotlight">LED прожектор подсветки</div>
                             </div>
                         </div>
                         <div class="btn-light-group">
@@ -355,8 +358,8 @@
                         <div style="display: flex; align-items: center; gap: 8px;">
                             <span style="font-size: 1.15rem;">🌙</span>
                             <div>
-                                <div style="font-size: 0.82rem; font-weight: 600; color: #f8fafc;">ИК подсветка</div>
-                                <div style="font-size: 0.68rem; color: var(--text-muted);">Ночной режим / IR-Cut</div>
+                                <div style="font-size: 0.82rem; font-weight: 600; color: #f8fafc;" data-i18n="lbl_ir">ИК подсветка</div>
+                                <div style="font-size: 0.68rem; color: var(--text-muted);" data-i18n="desc_ir">Ночной режим / IR-Cut</div>
                             </div>
                         </div>
                         <div class="btn-light-group">
@@ -371,23 +374,23 @@
             <!-- Keyboard & Controls Hint Banner -->
             <div style="background: rgba(30, 41, 59, 0.7); border: 1px solid #334155; border-radius: 8px; padding: 8px 12px; font-size: 0.78rem; color: #cbd5e1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                 <span>🎮 <strong>Клавиатура активна:</strong></span>
-                <span>Стрелки или <span class="kbd-badge">W</span><span class="kbd-badge">A</span><span class="kbd-badge">S</span><span class="kbd-badge">D</span> — поворот</span>
+                <span>Стрелки или <span class="kbd-badge">W</span><span class="kbd-badge">A</span><span class="kbd-badge">S</span><span class="kbd-badge">D</span> - поворот</span>
                 <span>•</span>
-                <span><span class="kbd-badge">Space</span> — Стоп</span>
+                <span><span class="kbd-badge">Space</span> - Стоп</span>
                 <span>•</span>
-                <span><span class="kbd-badge">1</span>..<span class="kbd-badge">8</span> — Пресеты</span>
+                <span><span class="kbd-badge">1</span>..<span class="kbd-badge">8</span> - Пресеты</span>
                 <span>•</span>
-                <span><span class="kbd-badge">+</span>/<span class="kbd-badge">-</span> — Шаг</span>
+                <span><span class="kbd-badge">+</span>/<span class="kbd-badge">-</span> - Шаг</span>
             </div>
 
             <div class="grid">
                 <!-- PTZ Pad -->
                 <div class="card">
                     <div class="card-header">
-                        <div class="card-title">🕹️ Управление поворотным механизмом (PTZ)</div>
+                        <div class="card-title" data-i18n="card_ptz">🕹️ Управление поворотным механизмом (PTZ)</div>
                         <div style="display: flex; gap: 6px;">
-                            <button class="btn-scan" onclick="sendPtz('center')">🎯 В центр</button>
-                            <button class="btn-scan" onclick="sendPtz('calibrate')">⚙️ Калибровка</button>
+                            <button class="btn-scan" onclick="sendPtz('center')" data-i18n="btn_center">🎯 В центр</button>
+                            <button class="btn-scan" onclick="sendPtz('calibrate')" data-i18n="btn_calibrate">⚙️ Калибровка</button>
                         </div>
                     </div>
                     <div class="ptz-wrapper">
@@ -404,7 +407,7 @@
                         </div>
                         <div class="slider-row" style="max-width: 250px;">
                             <div class="slider-header">
-                                <span>Шаг перемещения:</span>
+                                <span data-i18n="lbl_step">Шаг перемещения:</span>
                                 <strong id="step-display">4</strong>
                             </div>
                             <input type="range" id="step-slider" min="1" max="8" value="4" oninput="document.getElementById('step-display').innerText = this.value">
@@ -415,8 +418,8 @@
                 <!-- PTZ Presets Card (8 Slots) -->
                 <div class="card">
                     <div class="card-header">
-                        <div class="card-title">📍 Позиции и Пресеты камеры (8 слотов)</div>
-                        <button class="btn-scan" onclick="loadPresetsList()">🔄 Обновить</button>
+                        <div class="card-title" data-i18n="card_presets">📍 Позиции и Пресеты камеры (8 слотов)</div>
+                        <button class="btn-scan" onclick="loadPresetsList()" data-i18n="btn_refresh">🔄 Обновить</button>
                     </div>
                     <p style="font-size: 0.78rem; color: var(--text-muted);">
                         Кликните на название, чтобы изменить его. Нажмите <span class="kbd-badge">1</span>..<span class="kbd-badge">8</span> на клавиатуре для быстрого перехода:
@@ -434,7 +437,7 @@
                 <div class="tab-main-col">
                     <div class="card">
                         <div class="card-header">
-                            <div class="card-title">🎨 Цветокоррекция и Базовые параметры сенсора</div>
+                            <div class="card-title" data-i18n="card_sensor">🎨 Цветокоррекция и Базовые параметры сенсора</div>
                             <button class="btn-scan" onclick="loadAllSettings()">🔄 Обновить</button>
                         </div>
 
@@ -578,7 +581,7 @@
                 <div class="tab-main-col">
                     <div class="card">
                         <div class="card-header">
-                            <div class="card-title">🌙 Ночной режим, ИК-фильтр и LED-прожектор</div>
+                            <div class="card-title" data-i18n="card_night">🌙 Ночной режим, ИК-фильтр и LED-прожектор</div>
                             <button class="btn-scan" onclick="loadAllSettings()">🔄 Обновить</button>
                         </div>
 
@@ -689,14 +692,14 @@
                         <!-- Main Stream -->
                         <div class="card">
                             <div class="card-header">
-                                <div class="card-title">📹 Основной поток (Main 1080P)</div>
+                                <div class="card-title" data-i18n="card_main_stream">📹 Основной поток (Main 1080P)</div>
                             </div>
 
                             <div class="form-group">
                                 <label class="form-label">Формат сжатия (Кодек):</label>
                                 <select id="set-compression" class="form-select">
-                                    <option value="H.265" selected>H.265 (HEVC — максимальная эффективность)</option>
-                                    <option value="H.264">H.264 (AVC — совместимость)</option>
+                                    <option value="H.265" selected>H.265 (HEVC - максимальная эффективность)</option>
+                                    <option value="H.264">H.264 (AVC - совместимость)</option>
                                 </select>
                             </div>
 
@@ -717,7 +720,7 @@
                                     <option value="512">512 Kbps</option>
                                     <option value="1024" selected>1024 Kbps (1 Mbps)</option>
                                     <option value="2048">2048 Kbps (2 Mbps)</option>
-                                    <option value="4096">4096 Kbps (4 Mbps — Высокое качество)</option>
+                                    <option value="4096">4096 Kbps (4 Mbps - Высокое качество)</option>
                                     <option value="6144">6144 Kbps (6 Mbps)</option>
                                 </select>
                             </div>
@@ -725,7 +728,7 @@
                             <div class="form-group">
                                 <label class="form-label">Управление битрейтом:</label>
                                 <select id="set-bitrate-ctrl" class="form-select">
-                                    <option value="VBR" selected>VBR (Переменный — лучший)</option>
+                                    <option value="VBR" selected>VBR (Переменный - лучший)</option>
                                     <option value="CBR">CBR (Постоянный)</option>
                                 </select>
                             </div>
@@ -743,7 +746,7 @@
                         <!-- Sub Stream -->
                         <div class="card">
                             <div class="card-header">
-                                <div class="card-title">📱 Второй поток (Sub Stream для NVR детекции)</div>
+                                <div class="card-title" data-i18n="card_sub_stream">📱 Второй поток (Sub Stream для NVR детекции)</div>
                             </div>
 
                             <label class="checkbox-label" style="margin-bottom: 6px;">
@@ -813,7 +816,7 @@
                         <!-- OSD Card -->
                         <div class="card">
                             <div class="card-header">
-                                <div class="card-title">🏷️ Наложение на видео (OSD)</div>
+                                <div class="card-title" data-i18n="card_osd">🏷️ Наложение на видео (OSD)</div>
                             </div>
 
                             <label class="checkbox-label">
@@ -824,7 +827,7 @@
                             <div class="form-group" style="margin-left: 24px;">
                                 <label class="form-label" for="set-osd-time-pos">Положение даты и времени:</label>
                                 <select id="set-osd-time-pos" class="form-select" onchange="updateOsdPreviewMarkers()">
-                                    <option value="TopRight" selected>Вверху справа (Top-Right — по умолчанию)</option>
+                                    <option value="TopRight" selected>Вверху справа (Top-Right - по умолчанию)</option>
                                     <option value="TopLeft">Вверху слева (Top-Left)</option>
                                     <option value="BottomRight">Внизу справа (Bottom-Right)</option>
                                     <option value="BottomLeft">Внизу слева (Bottom-Left)</option>
@@ -844,7 +847,7 @@
                             <div class="form-group" style="margin-left: 24px;">
                                 <label class="form-label" for="set-osd-title-pos">Положение имени камеры:</label>
                                 <select id="set-osd-title-pos" class="form-select" onchange="updateOsdPreviewMarkers()">
-                                    <option value="TopLeft" selected>Вверху слева (Top-Left — по умолчанию)</option>
+                                    <option value="TopLeft" selected>Вверху слева (Top-Left - по умолчанию)</option>
                                     <option value="TopRight">Вверху справа (Top-Right)</option>
                                     <option value="BottomLeft">Внизу слева (Bottom-Left)</option>
                                     <option value="BottomRight">Внизу справа (Bottom-Right)</option>
@@ -859,7 +862,7 @@
                         <!-- Audio Card -->
                         <div class="card">
                             <div class="card-header">
-                                <div class="card-title">🔊 Звук и Громкость (Audio)</div>
+                                <div class="card-title" data-i18n="card_audio">🔊 Звук и Громкость (Audio)</div>
                             </div>
 
                             <label class="checkbox-label">
@@ -926,7 +929,7 @@
                         <!-- Motion Detection -->
                         <div class="card">
                             <div class="card-header">
-                                <div class="card-title">🚨 Детекция движения (Motion Detection)</div>
+                                <div class="card-title" data-i18n="card_motion">🚨 Детекция движения (Motion Detection)</div>
                             </div>
 
                             <label class="checkbox-label">
@@ -937,7 +940,7 @@
                             <div class="form-group" style="margin-top: 8px;">
                                 <label class="form-label">Чувствительность детекции:</label>
                                 <select id="set-motion-sens" class="form-select">
-                                    <option value="1">1 (Очень низкая — минимум ложных)</option>
+                                    <option value="1">1 (Очень низкая - минимум ложных)</option>
                                     <option value="2">2 (Низкая)</option>
                                     <option value="3" selected>3 (Оптимальная)</option>
                                     <option value="4">4 (Высокая)</option>
@@ -954,7 +957,7 @@
                         <!-- PTZ Auto-Tracking -->
                         <div class="card">
                             <div class="card-header">
-                                <div class="card-title">🎯 Авто-слежение поворотным механизмом (PTZ Track)</div>
+                                <div class="card-title" data-i18n="card_track">🎯 Авто-слежение поворотным механизмом (PTZ Track)</div>
                             </div>
 
                             <label class="checkbox-label">
@@ -1012,7 +1015,7 @@
                 <!-- Wi-Fi Card -->
                 <div class="card">
                     <div class="card-header">
-                        <div class="card-title">📶 Беспроводная сеть Wi-Fi</div>
+                        <div class="card-title" data-i18n="card_wifi">📶 Беспроводная сеть Wi-Fi</div>
                         <button class="btn-scan" id="btn-scan" onclick="scanWifi()">
                             <span id="scan-spinner">🔍</span> Сканировать
                         </button>
@@ -1044,59 +1047,59 @@
                 <!-- Dual RTSP Streams & ONVIF Card -->
                 <div class="card">
                     <div class="card-header">
-                        <div class="card-title">📡 Ссылки на видеопотоки камеры</div>
+                        <div class="card-title" data-i18n="card_streams">📡 Ссылки на видеопотоки камеры</div>
                     </div>
                     <div class="stream-row">
                         <label class="form-label">Основной RTSP поток (Main 1080P HEVC / Full HD):</label>
                         <div class="url-box">
                             <span id="rtsp-main">rtsp://camera_ip:554/live/ch0</span>
-                            <button class="copy-btn" onclick="copyText('rtsp-main')">Копировать</button>
+                            <button class="copy-btn" data-i18n="btn_copy" onclick="copyText('rtsp-main')">Копировать</button>
                         </div>
 
                         <label class="form-label">Второй RTSP поток (Sub D1 HEVC для NVR детекции движения):</label>
                         <div class="url-box">
                             <span id="rtsp-sub">rtsp://camera_ip:554/live/ch1</span>
-                            <button class="copy-btn" onclick="copyText('rtsp-sub')">Копировать</button>
+                            <button class="copy-btn" data-i18n="btn_copy" onclick="copyText('rtsp-sub')">Копировать</button>
                         </div>
 
                         <label class="form-label">Прямые ссылки для стриминга (stream0 / stream1):</label>
                         <div class="url-box">
                             <span id="rtsp-stream0">rtsp://camera_ip:554/stream0</span>
-                            <button class="copy-btn" onclick="copyText('rtsp-stream0')">stream0</button>
+                            <button class="copy-btn" data-i18n="btn_copy" onclick="copyText('rtsp-stream0')">stream0</button>
                         </div>
                         <div class="url-box">
                             <span id="rtsp-stream1">rtsp://camera_ip:554/stream1</span>
-                            <button class="copy-btn" onclick="copyText('rtsp-stream1')">stream1</button>
+                            <button class="copy-btn" data-i18n="btn_copy" onclick="copyText('rtsp-stream1')">stream1</button>
                         </div>
 
                         <label class="form-label">ONVIF Device Service (Dual Profile S/G):</label>
                         <div class="url-box">
                             <span id="onvif-url">http://camera_ip:8899/onvif/device_service</span>
-                            <button class="copy-btn" onclick="copyText('onvif-url')">Копировать</button>
+                            <button class="copy-btn" data-i18n="btn_copy" onclick="copyText('onvif-url')">Копировать</button>
                         </div>
 
                         <label class="form-label">HTTP Snapshot (Прямой аппаратный снимок JPEG):</label>
                         <div class="url-box">
                             <span id="snap-url">http://camera_ip:8080/cgi-bin/snapshot</span>
-                            <button class="copy-btn" onclick="copyText('snap-url')">Копировать</button>
+                            <button class="copy-btn" data-i18n="btn_copy" onclick="copyText('snap-url')">Копировать</button>
                         </div>
 
-                        <label class="form-label">Home Assistant REST API — Белый фонарь (Вкл / Выкл / Авто):</label>
+                        <label class="form-label">Home Assistant REST API - Белый фонарь (Вкл / Выкл / Авто):</label>
                         <div class="url-box">
                             <span id="ha-white-api">http://camera_ip:8080/cgi-bin/light?white=on</span>
-                            <button class="copy-btn" onclick="copyText('ha-white-api')">Копировать</button>
+                            <button class="copy-btn" data-i18n="btn_copy" onclick="copyText('ha-white-api')">Копировать</button>
                         </div>
 
-                        <label class="form-label">Home Assistant REST API — ИК подсветка (Вкл / Выкл / Авто):</label>
+                        <label class="form-label">Home Assistant REST API - ИК подсветка (Вкл / Выкл / Авто):</label>
                         <div class="url-box">
                             <span id="ha-ir-api">http://camera_ip:8080/cgi-bin/light?ir=on</span>
-                            <button class="copy-btn" onclick="copyText('ha-ir-api')">Копировать</button>
+                            <button class="copy-btn" data-i18n="btn_copy" onclick="copyText('ha-ir-api')">Копировать</button>
                         </div>
 
-                        <label class="form-label">Home Assistant REST API — Статус подсветки (JSON):</label>
+                        <label class="form-label">Home Assistant REST API - Статус подсветки (JSON):</label>
                         <div class="url-box">
                             <span id="ha-status-api">http://camera_ip:8080/cgi-bin/light</span>
-                            <button class="copy-btn" onclick="copyText('ha-status-api')">Копировать</button>
+                            <button class="copy-btn" data-i18n="btn_copy" onclick="copyText('ha-status-api')">Копировать</button>
                         </div>
                     </div>
                 </div>
@@ -1111,7 +1114,7 @@
                         <!-- Time Synchronization -->
                         <div class="card">
                             <div class="card-header">
-                                <div class="card-title">🕒 Дата и системное время</div>
+                                <div class="card-title" data-i18n="card_time">🕒 Дата и системное время</div>
                             </div>
                             <p style="font-size: 0.82rem; color: var(--text-muted);">
                                 Текущее время на камере: <strong id="cam-current-time" style="color: var(--accent); font-family: monospace;">Загрузка...</strong>
@@ -1122,7 +1125,7 @@
                         <!-- System Information & Maintenance -->
                         <div class="card">
                             <div class="card-header">
-                                <div class="card-title">🖥️ Управление устройством</div>
+                                <div class="card-title" data-i18n="card_sys_mgmt">🖥️ Управление устройством</div>
                             </div>
                             <div class="form-group">
                                 <label class="form-label">Сетевое имя камеры (Hostname):</label>
@@ -1170,16 +1173,10 @@
         let toastTimeout = null;
         let savedPresets = {};
 
-        const defaultPresetNames = {
-            1: "🚪 Входная дверь",
-            2: "🚗 Въезд / Ворота",
-            3: "🪟 Окно",
-            4: "🅿️ Парковка",
-            5: "🏡 Двор / Сад",
-            6: "🚪 Калитка",
-            7: "🛡️ Периметр",
-            8: "🔭 Общий обзор"
-        };
+        function getDefaultPresetName(i) {
+            const defs = t("presets_def");
+            return (defs && defs[i]) ? defs[i] : `Preset ${i}`;
+        }
 
         // --- TOAST NOTIFICATIONS ---
         function showToast(msg, type = "success") {
@@ -1298,6 +1295,472 @@
         }
 
         // --- AUTHENTICATION ---
+        
+        // --- INTERNATIONALIZATION (i18n: RU / EN) ---
+        const I18N = {
+            ru: {
+                doc_title: "CleanCam OS • Автономное управление",
+                sub_title: "GK7201V300 • H.265 Dual-Stream • Чистая прошивка",
+                btn_password: "🔑 Пароль",
+                btn_logout: "Выход",
+                status_ap: "Точка доступа: CleanCam_Setup",
+                status_client: "Wi-Fi: Подключено",
+                status_detect: "Определение...",
+                
+                // Tabs
+                tab_live: "📹 Прямой эфир & PTZ",
+                tab_image: "🎨 Изображение и Сенсор",
+                tab_night: "🌙 Ночь и Подсветка",
+                tab_video: "⚙️ Видеопотоки & Кодеки",
+                tab_osd_audio: "🏷️ OSD & Аудио",
+                tab_detect: "🚨 Детекция & Слежение",
+                tab_network: "📶 Wi-Fi & Потоки",
+                tab_system: "🕒 Время & Система",
+
+                // Live Tab
+                card_live: "📹 Прямой просмотр (Live Stream)",
+                btn_pause: "⏸ Пауза",
+                btn_play: "▶ Воспроизведение",
+                btn_snap: "📸 Снимок",
+                btn_fullscreen: "⛶ Полный экран",
+                live_latency: "Пинг:",
+                live_hint: "Наведите курсор или используйте стрелки/WASD на клавиатуре",
+                btn_expand: "⛶ Развернуть",
+                card_spotlight: "💡 Быстрое освещение и Ночной режим (Spotlight & IR)",
+                lbl_spotlight: "Белый фонарь",
+                desc_spotlight: "LED прожектор подсветки",
+                lbl_ir: "ИК подсветка",
+                desc_ir: "Ночной режим / IR-Cut",
+                btn_on: "Вкл",
+                btn_off: "Выкл",
+                btn_auto: "Авто",
+                btn_night_ir: "Ночь (ИК)",
+                btn_day_color: "День (Цвет)",
+
+                // Keyboard Hint
+                kbd_active: "🎮 Клавиатура активна:",
+                kbd_arrows: "Стрелки или WASD - поворот",
+                kbd_stop: "Space - Стоп",
+                kbd_presets: "1..8 - Пресеты",
+                kbd_step: "+/- - Шаг",
+
+                // PTZ Card
+                card_ptz: "🕹️ Управление поворотным механизмом (PTZ)",
+                btn_center: "🎯 В центр",
+                btn_calibrate: "⚙️ Калибровка",
+                lbl_step: "Шаг перемещения:",
+
+                // Presets Card
+                card_presets: "📍 Позиции и Пресеты камеры (8 слотов)",
+                btn_refresh: "🔄 Обновить",
+                presets_hint: "Кликните на название, чтобы изменить его. Нажмите 1..8 на клавиатуре для быстрого перехода:",
+                preset_not_saved: "Не сохранен",
+                btn_preset_go: "🚀 Перейти",
+                btn_preset_save: "💾 Запомнить",
+
+                // Image & Sensor Tab
+                card_sensor: "🎨 Цветокоррекция и Базовые параметры сенсора",
+                lbl_brightness: "Яркость (Brightness):",
+                lbl_contrast: "Контрастность (Contrast):",
+                lbl_saturation: "Насыщенность (Saturation):",
+                lbl_hue: "Оттенок (Hue):",
+                lbl_sharpness: "Четкость / Резкость (Sharpness):",
+                lbl_wdr_gain: "Усиление WDR (WDR Gain):",
+                lbl_anti_flicker: "Антимерцание (Anti-Flicker):",
+                lbl_wdr_mode: "Режим WDR (Динамический диапазон):",
+                lbl_color_style: "Стиль цветопередачи:",
+                lbl_hlc: "Подавление яркого света (HLC):",
+                lbl_white_balance: "Баланс белого:",
+                chk_flip: "Переворот изображения (Flip 180° для потолочного монтажа)",
+                chk_mirror: "Зеркалирование по горизонтали (Mirror)",
+                btn_apply_image: "Применить параметры изображения",
+
+                // Night Tab
+                card_night: "🌙 Ночной режим, ИК-фильтр и LED-прожектор",
+                lbl_quick_spotlight: "💡 Фонарь:",
+                lbl_quick_ir: "🌙 ИК подсветка:",
+                lbl_daynight_mode: "Режим ночного видения (Day/Night IR-Cut):",
+                lbl_denoise: "Шумоподавление 2D/3D NR:",
+                lbl_dnc_thr: "Порог переключения День/Ночь (Threshold):",
+                lbl_wl_mode: "Режим белого LED-прожектора:",
+                lbl_wl_bright: "Яркость LED-прожектора:",
+                lbl_wl_dur: "Длительность свечения при тревоге:",
+                btn_apply_night: "Применить параметры ночного видения",
+
+                // Video Streams Tab
+                card_main_stream: "📹 Основной поток (Main 1080P)",
+                card_sub_stream: "📱 Второй поток (Sub Stream для NVR детекции)",
+                lbl_codec: "Формат сжатия (Кодек):",
+                lbl_fps: "Частота кадров (FPS):",
+                lbl_bitrate: "Битрейт (кбит/с):",
+                lbl_bitrate_ctrl: "Контроль битрейта:",
+                lbl_gop: "Интервал ключевых кадров (I-Frame / GOP):",
+                chk_sub_enable: "Включить второй видеопоток (Sub Stream)",
+                lbl_sub_res: "Разрешение второго потока:",
+                btn_apply_video: "Применить параметры видеопотоков",
+
+                // OSD & Audio Tab
+                card_osd: "🏷️ Наложение на видео (OSD)",
+                chk_osd_time: "Отображать дату и время на видео (Time Stamp)",
+                lbl_osd_time_pos: "Положение даты и времени:",
+                chk_osd_title: "Отображать имя камеры на видео",
+                lbl_osd_name: "Имя камеры (Текст OSD):",
+                lbl_osd_title_pos: "Положение имени камеры:",
+                notice_osd_drag: "💡 Вы можете нажать на интерактивные метки [🕒 Дата] и [🏷️ Имя] прямо на превью справа для мгновенного перемещения в нужный угол!",
+                card_audio: "🔊 Звук и Громкость (Audio)",
+                chk_audio_enable: "Передавать звук микрофона в потоках RTSP/ONVIF",
+                lbl_mic_vol: "Чувствительность микрофона (Mic Volume):",
+                lbl_spk_vol: "Громкость динамика (Speaker Volume):",
+                btn_apply_osd_audio: "Применить настройки OSD и Звука",
+                card_osd_preview: "📹 Интерактивное превью OSD",
+
+                // Motion & Track Tab
+                card_motion: "🚨 Детекция движения (Motion Detection)",
+                chk_motion_enable: "Включить программную детекцию движения",
+                lbl_motion_sens: "Чувствительность детекции:",
+                chk_motion_beep: "Звуковой сигнал встроенного зуммера при тревоге",
+                card_track: "🎯 Авто-слежение поворотным механизмом (PTZ Track)",
+                chk_track_enable: "Автоматически поворачивать камеру за объектом",
+                lbl_track_sens: "Чувствительность трекинга:",
+                lbl_track_ret: "Возврат в исходное положение после потери объекта:",
+                btn_apply_detect: "Применить параметры детекции и слежения",
+
+                // Network Tab
+                card_wifi: "📶 Беспроводная сеть Wi-Fi",
+                btn_scan_wifi: "Сканировать",
+                notice_wifi_ap: "При потере связи камера автоматически включает резервную сеть CleanCam_Setup (192.168.10.1).",
+                wifi_scanning: "Сканирование эфира Wi-Fi...",
+                wifi_no_networks: "Сети не найдены.",
+                wifi_scan_hint: "Нажмите «Сканировать», чтобы обновить список доступных сетей.",
+                lbl_wifi_ssid: "Имя сети (SSID):",
+                placeholder_wifi_ssid: "SSID сети",
+                lbl_wifi_pass: "Пароль Wi-Fi:",
+                placeholder_wifi_pass: "Пароль",
+                btn_wifi_connect: "Подключить камеру к Wi-Fi",
+                card_streams: "📡 Ссылки на видеопотоки камеры",
+                lbl_main_rtsp: "Основной RTSP поток (Main 1080P HEVC / Full HD):",
+                lbl_sub_rtsp: "Второй RTSP поток (Sub D1 HEVC для NVR детекции движения):",
+                lbl_direct_rtsp: "Прямые ссылки для стриминга (stream0 / stream1):",
+                lbl_onvif: "ONVIF Device Service (Dual Profile S/G):",
+                lbl_snap: "HTTP Snapshot (Прямой аппаратный снимок JPEG):",
+                lbl_ha_white: "Home Assistant REST API - Белый фонарь (Вкл / Выкл / Авто):",
+                lbl_ha_ir: "Home Assistant REST API - ИК подсветка (Вкл / Выкл / Авто):",
+                lbl_ha_status: "Home Assistant REST API - Статус подсветки (JSON):",
+                btn_copy: "Копировать",
+
+                // System Tab
+                card_time: "🕒 Дата и системное время",
+                lbl_cam_time: "Текущее время на камере:",
+                btn_sync_time: "🕒 Синхронизировать время с компьютером",
+                card_sys_mgmt: "🖥️ Управление устройством",
+                lbl_hostname: "Сетевое имя камеры (Hostname):",
+                btn_save_name: "Сохранить имя",
+                btn_reboot: "🔄 Перезагрузить камеру",
+                card_side_preview: "📹 Живое превью",
+
+                // Modals
+                login_title: "Вход в CleanCam OS",
+                login_desc: "Автономная панель управления камерой",
+                login_notice: "По умолчанию: логин admin, пароль admin.",
+                lbl_login_user: "Имя пользователя:",
+                lbl_login_pass: "Пароль:",
+                btn_login_submit: "Войти в систему",
+                pwd_title: "🔑 Смена пароля администратора",
+                pwd_desc: "Новый пароль сохраняется во встроенную память flash и не сбрасывается после перезагрузки.",
+                lbl_old_pass: "Текущий пароль:",
+                lbl_new_pass: "Новый пароль:",
+                lbl_confirm_pass: "Повтор нового пароля:",
+                btn_cancel: "Отмена",
+                btn_save_pwd: "Сохранить",
+
+                // Presets default names
+                presets_def: {
+                    1: "🚪 Входная дверь",
+                    2: "🚗 Въезд / Ворота",
+                    3: "🪟 Окно",
+                    4: "🅿️ Парковка",
+                    5: "🏡 Двор / Сад",
+                    6: "🚪 Калитка",
+                    7: "🛡️ Периметр",
+                    8: "🔭 Общий обзор"
+                },
+
+                // Toasts & Messages
+                msg_copied: "Скопировано в буфер!",
+                msg_login_ok: "Успешный вход в CleanCam OS!",
+                msg_login_err: "Неверный логин или пароль",
+                msg_conn_err: "Ошибка соединения с камерой",
+                msg_logout: "Выход выполнен",
+                msg_pwd_mismatch: "Новые пароли не совпадают!",
+                msg_pwd_ok: "Пароль успешно обновлен!",
+                msg_pwd_err: "Ошибка смены пароля",
+                msg_step_changed: "Шаг поворота: ",
+                msg_slot_renamed: "Имя слота обновлено",
+                msg_preset_saved: "Пресет сохранен!",
+                msg_settings_loaded: "Параметры камеры успешно загружены!",
+                msg_settings_applied: "Настройки успешно применены!",
+                msg_time_synced: "Время камеры успешно синхронизировано!",
+                msg_reboot_confirm: "Вы действительно хотите перезагрузить камеру?",
+                msg_rebooting: "Камера перезагружается. Подождите 15 секунд...",
+                msg_wifi_sent: "Команда отправлена. Камера подключается к сети."
+            },
+
+            en: {
+                doc_title: "CleanCam OS • Standalone Control",
+                sub_title: "GK7201V300 • H.265 Dual-Stream • Clean Firmware",
+                btn_password: "🔑 Password",
+                btn_logout: "Logout",
+                status_ap: "Access Point: CleanCam_Setup",
+                status_client: "Wi-Fi: Connected",
+                status_detect: "Detecting...",
+
+                // Tabs
+                tab_live: "📹 Live & PTZ",
+                tab_image: "🎨 Image & Sensor",
+                tab_night: "🌙 Night & Light",
+                tab_video: "⚙️ Video Streams & Codecs",
+                tab_osd_audio: "🏷️ OSD & Audio",
+                tab_detect: "🚨 Detection & Tracking",
+                tab_network: "📶 Wi-Fi & Streams",
+                tab_system: "🕒 Time & System",
+
+                // Live Tab
+                card_live: "📹 Live Video Stream",
+                btn_pause: "⏸ Pause",
+                btn_play: "▶ Play",
+                btn_snap: "📸 Snapshot",
+                btn_fullscreen: "⛶ Fullscreen",
+                live_latency: "Latency:",
+                live_hint: "Hover cursor or use Arrow keys / WASD on keyboard",
+                btn_expand: "⛶ Expand",
+                card_spotlight: "💡 Quick Lighting & Night Mode (Spotlight & IR)",
+                lbl_spotlight: "White Spotlight",
+                desc_spotlight: "LED floodlight illumination",
+                lbl_ir: "IR Backlight",
+                desc_ir: "Night mode / IR-Cut",
+                btn_on: "On",
+                btn_off: "Off",
+                btn_auto: "Auto",
+                btn_night_ir: "Night (IR)",
+                btn_day_color: "Day (Color)",
+
+                // Keyboard Hint
+                kbd_active: "🎮 Keyboard active:",
+                kbd_arrows: "Arrow keys or WASD - pan/tilt",
+                kbd_stop: "Space - Stop",
+                kbd_presets: "1..8 - Presets",
+                kbd_step: "+/- - Step",
+
+                // PTZ Card
+                card_ptz: "🕹️ Pan-Tilt Control (PTZ)",
+                btn_center: "🎯 Center",
+                btn_calibrate: "⚙️ Calibrate",
+                lbl_step: "Move step:",
+
+                // Presets Card
+                card_presets: "📍 Camera Positions & Presets (8 slots)",
+                btn_refresh: "🔄 Refresh",
+                presets_hint: "Click name to rename. Press 1..8 on keyboard for quick jump:",
+                preset_not_saved: "Not saved",
+                btn_preset_go: "🚀 Goto",
+                btn_preset_save: "💾 Save",
+
+                // Image & Sensor Tab
+                card_sensor: "🎨 Color Correction & Base Sensor Parameters",
+                lbl_brightness: "Brightness:",
+                lbl_contrast: "Contrast:",
+                lbl_saturation: "Saturation:",
+                lbl_hue: "Hue:",
+                lbl_sharpness: "Sharpness:",
+                lbl_wdr_gain: "WDR Gain:",
+                lbl_anti_flicker: "Anti-Flicker:",
+                lbl_wdr_mode: "WDR Mode (Dynamic Range):",
+                lbl_color_style: "Color Style:",
+                lbl_hlc: "High Light Compensation (HLC):",
+                lbl_white_balance: "White Balance:",
+                chk_flip: "Image Flip (180° for ceiling mount)",
+                chk_mirror: "Horizontal Mirror",
+                btn_apply_image: "Apply Image Settings",
+
+                // Night Tab
+                card_night: "🌙 Night Vision, IR-Cut & LED Spotlight",
+                lbl_quick_spotlight: "💡 Spotlight:",
+                lbl_quick_ir: "🌙 IR Light:",
+                lbl_daynight_mode: "Night Vision Mode (Day/Night IR-Cut):",
+                lbl_denoise: "Noise Reduction (2D/3D NR):",
+                lbl_dnc_thr: "Day/Night Switch Threshold:",
+                lbl_wl_mode: "White LED Spotlight Mode:",
+                lbl_wl_bright: "LED Spotlight Brightness:",
+                lbl_wl_dur: "Spotlight Duration on Alarm:",
+                btn_apply_night: "Apply Night Vision Settings",
+
+                // Video Streams Tab
+                card_main_stream: "📹 Main Stream (1080P Full HD)",
+                card_sub_stream: "📱 Sub Stream (D1 for NVR Motion Detection)",
+                lbl_codec: "Compression Format (Codec):",
+                lbl_fps: "Frame Rate (FPS):",
+                lbl_bitrate: "Bitrate (kbps):",
+                lbl_bitrate_ctrl: "Bitrate Control:",
+                lbl_gop: "Keyframe Interval (I-Frame / GOP):",
+                chk_sub_enable: "Enable Second Video Stream (Sub Stream)",
+                lbl_sub_res: "Sub Stream Resolution:",
+                btn_apply_video: "Apply Video Stream Settings",
+
+                // OSD & Audio Tab
+                card_osd: "🏷️ Video Overlay (OSD)",
+                chk_osd_time: "Display Date & Time on Video (Time Stamp)",
+                lbl_osd_time_pos: "Date & Time Position:",
+                chk_osd_title: "Display Camera Name on Video",
+                lbl_osd_name: "Camera Name (OSD Text):",
+                lbl_osd_title_pos: "Camera Name Position:",
+                notice_osd_drag: "💡 You can click the interactive [🕒 Date] and [🏷️ Name] tags directly on the preview to quickly jump to any corner!",
+                card_audio: "🔊 Sound & Volume (Audio)",
+                chk_audio_enable: "Transmit Microphone Audio in RTSP/ONVIF streams",
+                lbl_mic_vol: "Microphone Sensitivity (Mic Volume):",
+                lbl_spk_vol: "Speaker Volume:",
+                btn_apply_osd_audio: "Apply OSD & Audio Settings",
+                card_osd_preview: "📹 Interactive OSD Preview",
+
+                // Motion & Track Tab
+                card_motion: "🚨 Motion Detection",
+                chk_motion_enable: "Enable Software Motion Detection",
+                lbl_motion_sens: "Detection Sensitivity:",
+                chk_motion_beep: "Buzzer Alarm on Motion",
+                card_track: "🎯 PTZ Auto-Tracking",
+                chk_track_enable: "Automatically Track Moving Objects with Pan-Tilt",
+                lbl_track_sens: "Tracking Sensitivity:",
+                lbl_track_ret: "Return to Home Position After Lost Target:",
+                btn_apply_detect: "Apply Detection & Tracking Settings",
+
+                // Network Tab
+                card_wifi: "📶 Wi-Fi Wireless Network",
+                btn_scan_wifi: "Scan",
+                notice_wifi_ap: "When connection is lost, camera automatically enables fallback network CleanCam_Setup (192.168.10.1).",
+                wifi_scanning: "Scanning Wi-Fi airspace...",
+                wifi_no_networks: "No networks found.",
+                wifi_scan_hint: "Click «Scan» to update the list of available networks.",
+                lbl_wifi_ssid: "Network Name (SSID):",
+                placeholder_wifi_ssid: "Network SSID",
+                lbl_wifi_pass: "Wi-Fi Password:",
+                placeholder_wifi_pass: "Password",
+                btn_wifi_connect: "Connect Camera to Wi-Fi",
+                card_streams: "📡 Camera Video Stream Links",
+                lbl_main_rtsp: "Main RTSP Stream (1080P HEVC / Full HD):",
+                lbl_sub_rtsp: "Sub RTSP Stream (D1 HEVC for NVR motion detection):",
+                lbl_direct_rtsp: "Direct Streaming Links (stream0 / stream1):",
+                lbl_onvif: "ONVIF Device Service (Dual Profile S/G):",
+                lbl_snap: "HTTP Snapshot (Direct hardware JPEG snapshot):",
+                lbl_ha_white: "Home Assistant REST API - White Spotlight (On / Off / Auto):",
+                lbl_ha_ir: "Home Assistant REST API - IR Backlight (On / Off / Auto):",
+                lbl_ha_status: "Home Assistant REST API - Light Status (JSON):",
+                btn_copy: "Copy",
+
+                // System Tab
+                card_time: "🕒 Date & System Time",
+                lbl_cam_time: "Current Camera Time:",
+                btn_sync_time: "🕒 Synchronize Time with Browser",
+                card_sys_mgmt: "🖥️ Device Management",
+                lbl_hostname: "Camera Hostname:",
+                btn_save_name: "Save Hostname",
+                btn_reboot: "🔄 Reboot Camera",
+                card_side_preview: "📹 Live Preview",
+
+                // Modals
+                login_title: "CleanCam OS Login",
+                login_desc: "Standalone Camera Control Dashboard",
+                login_notice: "Defaults: username admin, password admin.",
+                lbl_login_user: "Username:",
+                lbl_login_pass: "Password:",
+                btn_login_submit: "Log In",
+                pwd_title: "🔑 Change Admin Password",
+                pwd_desc: "New password is saved to flash memory and persists across reboots.",
+                lbl_old_pass: "Current Password:",
+                lbl_new_pass: "New Password:",
+                lbl_confirm_pass: "Confirm New Password:",
+                btn_cancel: "Cancel",
+                btn_save_pwd: "Save Password",
+
+                // Presets default names
+                presets_def: {
+                    1: "🚪 Front Door",
+                    2: "🚗 Gate / Entrance",
+                    3: "🪟 Window",
+                    4: "🅿️ Parking Lot",
+                    5: "🏡 Yard / Garden",
+                    6: "🚪 Wicket Door",
+                    7: "🛡️ Perimeter",
+                    8: "🔭 General View"
+                },
+
+                // Toasts & Messages
+                msg_copied: "Copied to clipboard!",
+                msg_login_ok: "Logged in to CleanCam OS!",
+                msg_login_err: "Invalid username or password",
+                msg_conn_err: "Camera connection error",
+                msg_logout: "Logged out successfully",
+                msg_pwd_mismatch: "New passwords do not match!",
+                msg_pwd_ok: "Password successfully updated!",
+                msg_pwd_err: "Failed to update password",
+                msg_step_changed: "PTZ Step: ",
+                msg_slot_renamed: "Slot name updated",
+                msg_preset_saved: "Preset saved!",
+                msg_settings_loaded: "Camera parameters loaded successfully!",
+                msg_settings_applied: "Settings applied successfully!",
+                msg_time_synced: "Camera time synchronized successfully!",
+                msg_reboot_confirm: "Are you sure you want to reboot the camera?",
+                msg_rebooting: "Camera is rebooting. Please wait 15 seconds...",
+                msg_wifi_sent: "Command sent. Camera is connecting to Wi-Fi."
+            }
+        };
+
+        let currentLang = localStorage.getItem("cleancam_lang") || ((navigator.language && navigator.language.toLowerCase().startsWith("ru")) ? "ru" : "en");
+
+        function t(key) {
+            return (I18N[currentLang] && I18N[currentLang][key]) || (I18N["ru"] && I18N["ru"][key]) || key;
+        }
+
+        function setLanguage(lang) {
+            currentLang = (lang === "en" || lang === "ru") ? lang : "ru";
+            localStorage.setItem("cleancam_lang", currentLang);
+            document.documentElement.lang = currentLang;
+            document.title = t("doc_title");
+
+            const codeSpan = document.getElementById("lang-code");
+            if (codeSpan) codeSpan.innerText = currentLang === "ru" ? "EN" : "RU";
+
+            // Update all elements with data-i18n
+            document.querySelectorAll("[data-i18n]").forEach(el => {
+                const k = el.getAttribute("data-i18n");
+                if (I18N[currentLang] && I18N[currentLang][k] !== undefined) {
+                    el.innerHTML = I18N[currentLang][k];
+                }
+            });
+
+            // Update all elements with data-i18n-title
+            document.querySelectorAll("[data-i18n-title]").forEach(el => {
+                const k = el.getAttribute("data-i18n-title");
+                if (I18N[currentLang] && I18N[currentLang][k] !== undefined) {
+                    el.title = I18N[currentLang][k];
+                }
+            });
+
+            // Update all elements with data-i18n-placeholder
+            document.querySelectorAll("[data-i18n-placeholder]").forEach(el => {
+                const k = el.getAttribute("data-i18n-placeholder");
+                if (I18N[currentLang] && I18N[currentLang][k] !== undefined) {
+                    el.placeholder = I18N[currentLang][k];
+                }
+            });
+
+            renderPresetSlots();
+            updateStatus();
+        }
+
+        function toggleLang() {
+            setLanguage(currentLang === "ru" ? "en" : "ru");
+            showToast(currentLang === "ru" ? "Язык интерфейса: Русский" : "Interface language: English");
+        }
+
         function checkAuth() {
             const tok = localStorage.getItem("cleancam_token") || "";
             fetch(`${API_BASE}/cgi-bin/auth?action=check&token=${encodeURIComponent(tok)}`)
@@ -1585,7 +2048,7 @@
             container.innerHTML = "";
 
             for (let i = 1; i <= 8; i++) {
-                const savedName = localStorage.getItem(`cleancam_preset_${i}`) || defaultPresetNames[i] || `Пресет ${i}`;
+                const savedName = localStorage.getItem(`cleancam_preset_${i}`) || getDefaultPresetName(i) || `Пресет ${i}`;
                 const coords = savedPresets[i] ? `(${savedPresets[i].x}, ${savedPresets[i].y})` : "Не сохранен";
 
                 const slot = document.createElement("div");
@@ -1600,8 +2063,8 @@
                         <span class="preset-coords-badge" id="preset-coords-${i}">${coords}</span>
                     </div>
                     <div class="preset-actions">
-                        <button class="preset-btn-go" onclick="gotoPreset(${i})">🚀 Перейти</button>
-                        <button class="preset-btn-save" onclick="savePreset(${i})">💾 Запомнить</button>
+                        <button class="preset-btn-go" onclick="gotoPreset(${i})">${t("btn_preset_go")}</button>
+                        <button class="preset-btn-save" onclick="savePreset(${i})">${t("btn_preset_save")}</button>
                     </div>
                 `;
                 container.appendChild(slot);
@@ -1978,6 +2441,7 @@
         }
 
         // Initialize Authentication & App
+        setLanguage(currentLang);
         checkAuth();
         setInterval(updateStatus, 10000);
     </script>
