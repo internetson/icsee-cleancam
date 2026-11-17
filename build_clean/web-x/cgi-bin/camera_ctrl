@@ -1,0 +1,361 @@
+#!/bin/sh
+export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/mnt/custom:/var/tmp:$PATH"
+echo "Content-Type: application/json; charset=utf-8"
+echo "Access-Control-Allow-Origin: *"
+echo "Connection: close"
+echo ""
+
+DATA="$QUERY_STRING"
+if [ "$REQUEST_METHOD" = "POST" ] && [ -z "$DATA" ]; then
+    read -r -t 1 DATA 2>/dev/null
+fi
+
+# URL decode helper
+urldecode() {
+    echo -e "$(echo "$1" | sed 's/+/ /g;s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')"
+}
+
+get_param() {
+    VAL=$(echo "$DATA" | sed -n "s/.*[?&]$1=\([^&]*\).*/\1/p")
+    [ -z "$VAL" ] && VAL=$(echo "$DATA" | sed -n "s/^$1=\([^&]*\).*/\1/p")
+    urldecode "$VAL"
+}
+
+CMD=$(get_param "cmd")
+CFG_FILE="/mnt/mtd/Config/CameraSettings.json"
+mkdir -p /mnt/mtd/Config 2>/dev/null
+
+# -------------------------------------------------------------
+# COMMAND: REBOOT
+# -------------------------------------------------------------
+if [ "$CMD" = "reboot" ]; then
+    echo '{"status": "ok", "message": "Камера перезагружается..."}'
+    (sleep 1 && sync && reboot) >/dev/null 2>&1 &
+    exit 0
+fi
+
+# -------------------------------------------------------------
+# COMMAND: SET SYSTEM TIME
+# -------------------------------------------------------------
+if [ "$CMD" = "set_time" ]; then
+    TIME_STR=$(get_param "time")
+    if [ -n "$TIME_STR" ]; then
+        date -s "$TIME_STR" >/dev/null 2>&1
+        hwclock -w 2>/dev/null
+        echo "{\"status\": \"ok\", \"message\": \"Время успешно синхронизировано: $(date)\"}"
+    else
+        echo '{"status": "error", "message": "Не указано время"}'
+    fi
+    exit 0
+fi
+
+# -------------------------------------------------------------
+# COMMAND: GET CONFIGURATION
+# -------------------------------------------------------------
+if [ "$CMD" = "get" ]; then
+    if [ -f "$CFG_FILE" ]; then
+        CURR_TIME=$(date '+%Y-%m-%d %H:%M:%S')
+        sed "s/\"current_time\": *\"[^\"]*\"/\"current_time\": \"$CURR_TIME\"/" "$CFG_FILE"
+    else
+        CURR_TIME=$(date '+%Y-%m-%d %H:%M:%S')
+        cat << EOF
+{
+  "brightness": 50,
+  "contrast": 50,
+  "saturation": 50,
+  "hue": 50,
+  "sharpness": 50,
+  "flip": 0,
+  "mirror": 0,
+  "anti_flicker": "50Hz",
+  "wdr": "Auto",
+  "wdr_gain": 50,
+  "hlc": 0,
+  "style": "typedefault",
+  "white_balance": "Auto",
+  "daynight": "Auto",
+  "dnc_threshold": 30,
+  "denoise": 3,
+  "whitelight_mode": "Auto",
+  "whitelight_brightness": 50,
+  "whitelight_duration": 60,
+  "fps": 12,
+  "bitrate": 1024,
+  "compression": "H.265",
+  "bitrate_control": "VBR",
+  "quality": 4,
+  "gop": 4,
+  "sub_enable": true,
+  "sub_fps": 12,
+  "sub_bitrate": 512,
+  "sub_resolution": "D1",
+  "osd_time": true,
+  "osd_time_pos": "TopRight",
+  "osd_title": true,
+  "osd_title_pos": "TopLeft",
+  "osd_name": "CleanCam",
+  "audio_enable": true,
+  "mic_volume": 80,
+  "spk_volume": 80,
+  "motion_enable": true,
+  "motion_sensitivity": 3,
+  "motion_beep": false,
+  "track_enable": false,
+  "track_sensitivity": 1,
+  "track_return_time": 60,
+  "device_name": "CleanCam-GK7201",
+  "current_time": "$CURR_TIME"
+}
+EOF
+    fi
+    exit 0
+fi
+
+# -------------------------------------------------------------
+# COMMAND: SET CONFIGURATION
+# -------------------------------------------------------------
+BRIGHTNESS=$(get_param "brightness")
+CONTRAST=$(get_param "contrast")
+SATURATION=$(get_param "saturation")
+HUE=$(get_param "hue")
+SHARPNESS=$(get_param "sharpness")
+FLIP=$(get_param "flip")
+MIRROR=$(get_param "mirror")
+ANTI_FLICKER=$(get_param "anti_flicker")
+WDR=$(get_param "wdr")
+WDR_GAIN=$(get_param "wdr_gain")
+HLC=$(get_param "hlc")
+STYLE=$(get_param "style")
+WHITE_BALANCE=$(get_param "white_balance")
+
+DAYNIGHT=$(get_param "daynight")
+DNC_THRESHOLD=$(get_param "dnc_threshold")
+DENOISE=$(get_param "denoise")
+WHITELIGHT_MODE=$(get_param "whitelight_mode")
+WHITELIGHT_BRIGHTNESS=$(get_param "whitelight_brightness")
+WHITELIGHT_DURATION=$(get_param "whitelight_duration")
+
+FPS=$(get_param "fps")
+BITRATE=$(get_param "bitrate")
+COMPRESSION=$(get_param "compression")
+BITRATE_CONTROL=$(get_param "bitrate_control")
+QUALITY=$(get_param "quality")
+GOP=$(get_param "gop")
+SUB_ENABLE=$(get_param "sub_enable")
+SUB_FPS=$(get_param "sub_fps")
+SUB_BITRATE=$(get_param "sub_bitrate")
+SUB_RESOLUTION=$(get_param "sub_resolution")
+
+OSD_TIME=$(get_param "osd_time")
+OSD_TIME_POS=$(get_param "osd_time_pos")
+OSD_TITLE=$(get_param "osd_title")
+OSD_TITLE_POS=$(get_param "osd_title_pos")
+OSD_NAME=$(get_param "osd_name")
+
+AUDIO_ENABLE=$(get_param "audio_enable")
+MIC_VOLUME=$(get_param "mic_volume")
+SPK_VOLUME=$(get_param "spk_volume")
+
+MOTION_ENABLE=$(get_param "motion_enable")
+MOTION_SENSITIVITY=$(get_param "motion_sensitivity")
+MOTION_BEEP=$(get_param "motion_beep")
+TRACK_ENABLE=$(get_param "track_enable")
+TRACK_SENSITIVITY=$(get_param "track_sensitivity")
+TRACK_RETURN_TIME=$(get_param "track_return_time")
+
+DEVICE_NAME=$(get_param "device_name")
+
+# Set sensible defaults for any unpassed values
+[ -z "$BRIGHTNESS" ] && BRIGHTNESS=50
+[ -z "$CONTRAST" ] && CONTRAST=50
+[ -z "$SATURATION" ] && SATURATION=50
+[ -z "$HUE" ] && HUE=50
+[ -z "$SHARPNESS" ] && SHARPNESS=50
+[ -z "$FLIP" ] && FLIP=0
+[ -z "$MIRROR" ] && MIRROR=0
+[ -z "$ANTI_FLICKER" ] && ANTI_FLICKER="50Hz"
+[ -z "$WDR" ] && WDR="Auto"
+[ -z "$WDR_GAIN" ] && WDR_GAIN=50
+[ -z "$HLC" ] && HLC=0
+[ -z "$STYLE" ] && STYLE="typedefault"
+[ -z "$WHITE_BALANCE" ] && WHITE_BALANCE="Auto"
+
+[ -z "$DAYNIGHT" ] && DAYNIGHT="Auto"
+[ -z "$DNC_THRESHOLD" ] && DNC_THRESHOLD=30
+[ -z "$DENOISE" ] && DENOISE=3
+[ -z "$WHITELIGHT_MODE" ] && WHITELIGHT_MODE="Auto"
+[ -z "$WHITELIGHT_BRIGHTNESS" ] && WHITELIGHT_BRIGHTNESS=50
+[ -z "$WHITELIGHT_DURATION" ] && WHITELIGHT_DURATION=60
+
+[ -z "$FPS" ] && FPS=12
+[ -z "$BITRATE" ] && BITRATE=1024
+[ -z "$COMPRESSION" ] && COMPRESSION="H.265"
+[ -z "$BITRATE_CONTROL" ] && BITRATE_CONTROL="VBR"
+[ -z "$QUALITY" ] && QUALITY=4
+[ -z "$GOP" ] && GOP=4
+[ -z "$SUB_ENABLE" ] && SUB_ENABLE="true"
+[ -z "$SUB_FPS" ] && SUB_FPS=12
+[ -z "$SUB_BITRATE" ] && SUB_BITRATE=512
+[ -z "$SUB_RESOLUTION" ] && SUB_RESOLUTION="D1"
+
+[ -z "$OSD_TIME" ] && OSD_TIME="true"
+[ -z "$OSD_TIME_POS" ] && OSD_TIME_POS="TopRight"
+[ -z "$OSD_TITLE" ] && OSD_TITLE="true"
+[ -z "$OSD_TITLE_POS" ] && OSD_TITLE_POS="TopLeft"
+[ -z "$OSD_NAME" ] && OSD_NAME="CleanCam"
+
+[ -z "$AUDIO_ENABLE" ] && AUDIO_ENABLE="true"
+[ -z "$MIC_VOLUME" ] && MIC_VOLUME=80
+[ -z "$SPK_VOLUME" ] && SPK_VOLUME=80
+
+[ -z "$MOTION_ENABLE" ] && MOTION_ENABLE="true"
+[ -z "$MOTION_SENSITIVITY" ] && MOTION_SENSITIVITY=3
+[ -z "$MOTION_BEEP" ] && MOTION_BEEP="false"
+[ -z "$TRACK_ENABLE" ] && TRACK_ENABLE="false"
+[ -z "$TRACK_SENSITIVITY" ] && TRACK_SENSITIVITY=1
+[ -z "$TRACK_RETURN_TIME" ] && TRACK_RETURN_TIME=60
+
+[ -z "$DEVICE_NAME" ] && DEVICE_NAME="CleanCam-GK7201"
+
+# Save persistent configuration file
+CURR_TIME=$(date '+%Y-%m-%d %H:%M:%S')
+cat << EOF > "$CFG_FILE"
+{
+  "brightness": $BRIGHTNESS,
+  "contrast": $CONTRAST,
+  "saturation": $SATURATION,
+  "hue": $HUE,
+  "sharpness": $SHARPNESS,
+  "flip": $FLIP,
+  "mirror": $MIRROR,
+  "anti_flicker": "$ANTI_FLICKER",
+  "wdr": "$WDR",
+  "wdr_gain": $WDR_GAIN,
+  "hlc": $HLC,
+  "style": "$STYLE",
+  "white_balance": "$WHITE_BALANCE",
+  "daynight": "$DAYNIGHT",
+  "dnc_threshold": $DNC_THRESHOLD,
+  "denoise": $DENOISE,
+  "whitelight_mode": "$WHITELIGHT_MODE",
+  "whitelight_brightness": $WHITELIGHT_BRIGHTNESS,
+  "whitelight_duration": $WHITELIGHT_DURATION,
+  "fps": $FPS,
+  "bitrate": $BITRATE,
+  "compression": "$COMPRESSION",
+  "bitrate_control": "$BITRATE_CONTROL",
+  "quality": $QUALITY,
+  "gop": $GOP,
+  "sub_enable": $SUB_ENABLE,
+  "sub_fps": $SUB_FPS,
+  "sub_bitrate": $SUB_BITRATE,
+  "sub_resolution": "$SUB_RESOLUTION",
+  "osd_time": $OSD_TIME,
+  "osd_time_pos": "$OSD_TIME_POS",
+  "osd_title": $OSD_TITLE,
+  "osd_title_pos": "$OSD_TITLE_POS",
+  "osd_name": "$OSD_NAME",
+  "audio_enable": $AUDIO_ENABLE,
+  "mic_volume": $MIC_VOLUME,
+  "spk_volume": $SPK_VOLUME,
+  "motion_enable": $MOTION_ENABLE,
+  "motion_sensitivity": $MOTION_SENSITIVITY,
+  "motion_beep": $MOTION_BEEP,
+  "track_enable": $TRACK_ENABLE,
+  "track_sensitivity": $TRACK_SENSITIVITY,
+  "track_return_time": $TRACK_RETURN_TIME,
+  "device_name": "$DEVICE_NAME",
+  "current_time": "$CURR_TIME"
+}
+EOF
+
+pos_to_coords() {
+    case "$1" in
+        "TopLeft") echo "[256,512,255,24]" ;;
+        "TopRight") echo "[5800,512,255,24]" ;;
+        "BottomLeft") echo "[256,7500,255,24]" ;;
+        "BottomRight") echo "[5800,7500,255,24]" ;;
+        *,*)
+            CX=$(echo "$1" | cut -d',' -f1)
+            CY=$(echo "$1" | cut -d',' -f2)
+            echo "[$CX,$CY,255,24]"
+            ;;
+        *) echo "[256,512,255,24]" ;;
+    esac
+}
+
+# Map Hex Flags
+FLIP_HEX="0x00000000"
+[ "$FLIP" = "1" ] || [ "$FLIP" = "true" ] && FLIP_HEX="0x00000001"
+
+MIRROR_HEX="0x00000000"
+[ "$MIRROR" = "1" ] || [ "$MIRROR" = "true" ] && MIRROR_HEX="0x00000001"
+
+AF_HEX="0x00000001"
+case "$ANTI_FLICKER" in
+    "Off"|"0") AF_HEX="0x00000000" ;;
+    "50Hz"|"1") AF_HEX="0x00000001" ;;
+    "60Hz"|"2") AF_HEX="0x00000002" ;;
+esac
+
+DN_VAL="0x00000005"
+if [ "$DAYNIGHT" = "Color" ]; then
+    DN_VAL="0x00000001"
+    echo "ircut 0" > /proc/XmMotor 2>/dev/null
+elif [ "$DAYNIGHT" = "BW" ]; then
+    DN_VAL="0x00000002"
+    echo "ircut 1" > /proc/XmMotor 2>/dev/null
+fi
+
+WB_HEX="0x00000001"
+[ "$WHITE_BALANCE" = "Manual" ] && WB_HEX="0x00000002"
+
+WDR_AUTOGAIN=1
+[ "$WDR" = "Off" ] && WDR_AUTOGAIN=0
+
+ACUTANCE=$((SHARPNESS * 75))
+
+CFG_BIN="/var/tmp/xm_setcfg"
+[ ! -x "$CFG_BIN" ] && CFG_BIN="/mnt/custom/xm_setcfg"
+[ ! -x "$CFG_BIN" ] && CFG_BIN="xm_setcfg"
+
+if [ -x "$CFG_BIN" ]; then
+    # 1. Apply VideoColor
+    $CFG_BIN 1040 "{\"Name\":\"AVEnc.VideoColor\",\"AVEnc.VideoColor\":[[{\"Enable\":1,\"TimeSection\":\"1 00:00:00-24:00:00\",\"VideoColorParam\":{\"Acutance\":$ACUTANCE,\"Brightness\":$BRIGHTNESS,\"Contrast\":$CONTRAST,\"Gain\":0,\"Hue\":$HUE,\"Saturation\":$SATURATION,\"Whitebalance\":128}}]]}" >/dev/null 2>&1
+
+    # 2. Apply Camera.Param (Flip, Mirror, DayNight, Denoise, AntiFlicker, Threshold)
+    $CFG_BIN 1040 "{\"Name\":\"Camera.Param\",\"Camera.Param\":[{\"AeSensitivity\":5,\"ApertureMode\":\"0x00000001\",\"BLCMode\":\"0x00000001\",\"DayNightColor\":\"$DN_VAL\",\"Day_nfLevel\":$DENOISE,\"DncThr\":$DNC_THRESHOLD,\"ElecLevel\":50,\"EsShutter\":\"0x00000000\",\"ExposureParam\":{\"LeastTime\":\"0x00000100\",\"Level\":0,\"MostTime\":\"0x00010000\"},\"GainParam\":{\"AutoGain\":1,\"Gain\":50},\"IRCUTMode\":1,\"InfraredSwap\":0,\"IrcutSwap\":0,\"Night_nfLevel\":$DENOISE,\"PictureFlip\":\"$FLIP_HEX\",\"PictureMirror\":\"$MIRROR_HEX\",\"RejectFlicker\":\"$AF_HEX\",\"WhiteBalance\":\"$WB_HEX\"}]}" >/dev/null 2>&1
+
+    # 3. Apply Camera.ParamEx (WDR, Style, HLC)
+    $CFG_BIN 1040 "{\"Name\":\"Camera.ParamEx\",\"Camera.ParamEx\":[{\"BroadTrends\":{\"AutoGain\":$WDR_AUTOGAIN,\"Gain\":$WDR_GAIN},\"LightRestrainLevel\":$HLC,\"Style\":\"$STYLE\"}]}" >/dev/null 2>&1
+
+    # 4. Apply Camera.WhiteLight (LED Spotlight)
+    $CFG_BIN 1040 "{\"Name\":\"Camera.WhiteLight\",\"Camera.WhiteLight\":{\"Brightness\":$WHITELIGHT_BRIGHTNESS,\"MoveTrigLight\":{\"Duration\":$WHITELIGHT_DURATION,\"Level\":3},\"WorkMode\":\"$WHITELIGHT_MODE\"}}" >/dev/null 2>&1
+
+    # 5. Apply AVEnc.Encode (Main Stream & Sub Stream)
+    SUB_VID_ENABLE="false"
+    [ "$SUB_ENABLE" = "true" ] || [ "$SUB_ENABLE" = "1" ] && SUB_VID_ENABLE="true"
+
+    $CFG_BIN 1040 "{\"Name\":\"AVEnc.Encode\",\"AVEnc.Encode\":[{\"MainFormat\":[{\"AudioEnable\":$AUDIO_ENABLE,\"Video\":{\"BitRate\":$BITRATE,\"BitRateControl\":\"$BITRATE_CONTROL\",\"Compression\":\"$COMPRESSION\",\"FPS\":$FPS,\"GOP\":$GOP,\"Quality\":$QUALITY,\"Resolution\":\"1080P\"}}],\"ExtraFormat\":[{\"VideoEnable\":$SUB_VID_ENABLE,\"AudioEnable\":false,\"Video\":{\"BitRate\":$SUB_BITRATE,\"BitRateControl\":\"VBR\",\"Compression\":\"$COMPRESSION\",\"FPS\":$SUB_FPS,\"GOP\":$GOP,\"Resolution\":\"$SUB_RESOLUTION\"}}]}]}" >/dev/null 2>&1
+
+    # 6. Apply AVEnc.VideoWidget (OSD Time & Name with Coordinates)
+    TIME_COORDS=$(pos_to_coords "$OSD_TIME_POS")
+    TITLE_COORDS=$(pos_to_coords "$OSD_TITLE_POS")
+    $CFG_BIN 1040 "{\"Name\":\"AVEnc.VideoWidget\",\"AVEnc.VideoWidget\":[{\"ChannelTitle\":{\"Name\":\"$OSD_NAME\"},\"ChannelTitleAttribute\":{\"EncodeBlend\":$OSD_TITLE,\"RelativePos\":$TITLE_COORDS},\"TimeTitleAttribute\":{\"EncodeBlend\":$OSD_TIME,\"RelativePos\":$TIME_COORDS}}]}" >/dev/null 2>&1
+
+    # 7. Apply fVideo.Volume (Audio Volumes)
+    $CFG_BIN 1040 "{\"Name\":\"fVideo.Volume\",\"fVideo.Volume\":[{\"LeftVolume\":$MIC_VOLUME,\"RightVolume\":$SPK_VOLUME}]}" >/dev/null 2>&1
+
+    # 8. Apply Detect.MotionDetect
+    $CFG_BIN 1040 "{\"Name\":\"Detect.MotionDetect\",\"Detect.MotionDetect\":[{\"Enable\":$MOTION_ENABLE,\"Level\":$MOTION_SENSITIVITY,\"EventHandler\":{\"BeepEnable\":$MOTION_BEEP,\"RecordEnable\":true,\"SnapEnable\":true}}]}" >/dev/null 2>&1
+
+    # 9. Apply Detect.DetectTrack
+    $CFG_BIN 1040 "{\"Name\":\"Detect.DetectTrack\",\"Detect.DetectTrack\":{\"Enable\":$TRACK_ENABLE,\"Sensitivity\":$TRACK_SENSITIVITY,\"ReturnTime\":$TRACK_RETURN_TIME}}" >/dev/null 2>&1
+
+    # 10. Apply General.General (Device Name)
+    $CFG_BIN 1040 "{\"Name\":\"General.General\",\"General.General\":{\"MachineName\":\"$DEVICE_NAME\"}}" >/dev/null 2>&1
+fi
+
+sync &
+echo '{"status": "ok", "message": "Все параметры камеры успешно применены и сохранены во flash!"}'
+exit 0

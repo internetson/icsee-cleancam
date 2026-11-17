@@ -1,0 +1,37 @@
+#!/bin/sh
+# /mnt/custom/default.script - CleanCam Standalone DHCP Event Handler
+# Executed by udhcpc on deconfig, bound, and renew
+export PATH="/bin:/sbin:/usr/bin:/usr/sbin:$PATH"
+
+[ -z "$1" ] && exit 1
+
+case "$1" in
+    deconfig)
+        ifconfig $interface 0.0.0.0
+        ;;
+
+    renew|bound)
+        if [ -n "$ip" ]; then
+            ifconfig $interface $ip netmask ${subnet:-255.255.255.0} broadcast ${broadcast:-+}
+        fi
+
+        if [ -n "$router" ]; then
+            while route del default gw 0.0.0.0 dev $interface 2>/dev/null; do :; done
+            for r in $router; do
+                route add default gw $r dev $interface 2>/dev/null
+            done
+        fi
+
+        if [ -n "$dns" ]; then
+            mkdir -p /mnt/mtd/Config /tmp
+            echo -n > /tmp/resolv.conf
+            for d in $dns; do
+                echo "nameserver $d" >> /tmp/resolv.conf
+            done
+            cp -f /tmp/resolv.conf /etc/resolv.conf 2>/dev/null
+            cp -f /tmp/resolv.conf /mnt/mtd/Config/resolv.conf 2>/dev/null
+        fi
+        ;;
+esac
+
+exit 0

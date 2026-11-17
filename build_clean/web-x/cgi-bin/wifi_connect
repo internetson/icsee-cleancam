@@ -1,0 +1,59 @@
+#!/bin/sh
+export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/mnt/custom:/var/tmp:$PATH"
+echo "Content-Type: application/json"
+echo "Access-Control-Allow-Origin: *"
+echo "Connection: close"
+echo ""
+
+# Read from QUERY_STRING or stdin
+POST_DATA="$QUERY_STRING"
+if [ "$REQUEST_METHOD" = "POST" ] && [ -z "$POST_DATA" ]; then
+    read -r -t 1 POST_DATA 2>/dev/null
+fi
+
+urldecode() {
+    echo "$1" | sed 's/+/ /g; s/%/\\x/g' | xargs -0 printf "%b" 2>/dev/null || echo "$1"
+}
+
+RAW_SSID=$(echo "$POST_DATA" | sed -n 's/.*ssid=\([^&]*\).*/\1/p')
+RAW_PASS=$(echo "$POST_DATA" | sed -n 's/.*password=\([^&]*\).*/\1/p')
+
+# Also handle JSON payload: {"ssid": "...", "password": "..."}
+if [ -z "$RAW_SSID" ]; then
+    RAW_SSID=$(echo "$POST_DATA" | sed -n 's/.*"ssid"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
+    RAW_PASS=$(echo "$POST_DATA" | sed -n 's/.*"password"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
+fi
+
+SSID=$(urldecode "$RAW_SSID")
+PASS=$(urldecode "$RAW_PASS")
+
+if [ -z "$SSID" ]; then
+    echo '{"status": "error", "message": "Имя сети (SSID) не указано!"}'
+    exit 0
+fi
+
+mkdir -p /mnt/mtd/Config /mnt/mtd/Log 2>/dev/null
+
+# Write wpa.conf
+cat << EOF > /mnt/mtd/Config/wpa.conf
+ctrl_interface_group=0
+ap_scan=1
+
+network={
+	ssid="$SSID"
+	key_mgmt=WPA-PSK
+	pairwise=CCMP TKIP
+	group=CCMP TKIP
+	psk="$PASS"
+}
+EOF
+
+# Enable WLan in Xiongmai settings
+echo "ENABLE = 1" > /mnt/mtd/Config/WLan
+echo "StartupType:0" > /mnt/mtd/Log/WifiStartupType
+sync
+
+# Signal the background watchdog to immediately connect to this Wi-Fi
+touch /var/tmp/wifi_trigger_connect
+
+echo '{"status": "ok", "message": "Настройки сохранены! Камера подключается к сети: '"$SSID"'..."}'

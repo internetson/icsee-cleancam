@@ -1,0 +1,20 @@
+{
+	"Param": [
+        {
+            "RejectFlicker": "0x00000000",
+            "Day_nfLevel": 3,
+            "Night_nfLevel": 3,
+            "DncThr": 30,
+			"DayNightColor": "0x00000003"
+        }
+    ],
+	"ParamEx": [
+        {
+            "BroadTrends": {
+                "AutoGain": 0,
+                "Gain": 50
+            },
+            "Style": "type1"
+        }
+    ]  
+}

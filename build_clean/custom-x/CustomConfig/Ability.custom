@@ -1,0 +1,15 @@
+{
+    "VoiceTipType": {
+        "VoiceTip": [
+		    {
+                "VoiceEnum": 24
+            },
+			{
+                "VoiceEnum": 523
+            },
+            {
+                "VoiceEnum": 550
+            }
+        ]
+    }
+}

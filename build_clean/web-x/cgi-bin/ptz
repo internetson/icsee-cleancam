@@ -1,0 +1,146 @@
+#!/bin/sh
+export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/mnt/custom:/var/tmp:$PATH"
+echo "Content-Type: application/json"
+echo "Access-Control-Allow-Origin: *"
+echo "Connection: close"
+echo ""
+
+# Supports GET query: dir=DirectionUp&step=4
+# Or POST json / urlencoded
+DIR=$(echo "$QUERY_STRING" | sed -n 's/.*dir=\([^&]*\).*/\1/p')
+STEP=$(echo "$QUERY_STRING" | sed -n 's/.*step=\([^&]*\).*/\1/p')
+
+if [ "$REQUEST_METHOD" = "POST" ] && [ -z "$DIR" ]; then
+    read -r -t 1 POST_DATA 2>/dev/null
+    DIR=$(echo "$POST_DATA" | sed -n 's/.*"direction"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
+    STEP=$(echo "$POST_DATA" | sed -n 's/.*"step"[ ]*:[ ]*\([0-9]*\).*/\1/p')
+fi
+
+# Support CLI positional arguments: $1=dir, $2=step (or dir=... step=...)
+if [ -z "$DIR" ] && [ -n "$1" ]; then
+    case "$1" in
+        dir=*) DIR=$(echo "$1" | cut -d= -f2) ;;
+        *) DIR="$1" ;;
+    esac
+fi
+if [ -z "$STEP" ] && [ -n "$2" ]; then
+    case "$2" in
+        step=*) STEP=$(echo "$2" | cut -d= -f2) ;;
+        *) STEP="$2" ;;
+    esac
+fi
+
+[ -z "$STEP" ] && STEP=4
+if [ "$STEP" -le 10 ]; then
+    STEP=$((STEP * 30))
+fi
+
+if [ -e /proc/XmMotor ]; then
+    case "$DIR" in
+        autotest|calibrate)
+            echo "autotest" > /proc/XmMotor 2>/dev/null
+            echo "{\"status\": \"ok\", \"direction\": \"$DIR\"}"
+            exit 0
+            ;;
+        center)
+            echo "setstep 1975 20 718 20" > /proc/XmMotor 2>/dev/null
+            echo "{\"status\": \"ok\", \"direction\": \"$DIR\"}"
+            exit 0
+            ;;
+        preset_list)
+            PRESETS_JSON="{"
+            SEP=""
+            for P_FILE in /mnt/mtd/Config/preset_*.txt; do
+                [ ! -f "$P_FILE" ] && continue
+                P_NUM=$(echo "$P_FILE" | sed -n 's/.*preset_\([0-9]*\)\.txt/\1/p')
+                read -r P_X P_Y < "$P_FILE"
+                PRESETS_JSON="${PRESETS_JSON}${SEP}\"${P_NUM}\":{\"x\":$P_X,\"y\":$P_Y}"
+                SEP=","
+            done
+            PRESETS_JSON="${PRESETS_JSON}}"
+            echo "{\"status\": \"ok\", \"presets\": $PRESETS_JSON}"
+            exit 0
+            ;;
+        preset_save)
+            P_NUM=$(echo "$QUERY_STRING" | sed -n 's/.*num=\([0-9]*\).*/\1/p')
+            [ -z "$P_NUM" ] && P_NUM=1
+            CURR_X=$(cat /proc/XmMotor | awk '/-------------- motor x/{f=1; next} /-------------- motor y/{f=0} f && /curr step/{print $4}')
+            CURR_Y=$(cat /proc/XmMotor | awk '/-------------- motor y/{f=1} f && /curr step/{print $4}')
+            [ -z "$CURR_X" ] && CURR_X=1975
+            [ -z "$CURR_Y" ] && CURR_Y=718
+            mkdir -p /mnt/mtd/Config 2>/dev/null
+            echo "$CURR_X $CURR_Y" > "/mnt/mtd/Config/preset_${P_NUM}.txt"
+            echo "{\"status\": \"ok\", \"message\": \"Пресет $P_NUM сохранен ($CURR_X, $CURR_Y)\", \"x\": $CURR_X, \"y\": $CURR_Y}"
+            exit 0
+            ;;
+        preset_goto)
+            P_NUM=$(echo "$QUERY_STRING" | sed -n 's/.*num=\([0-9]*\).*/\1/p')
+            [ -z "$P_NUM" ] && P_NUM=1
+            if [ -f "/mnt/mtd/Config/preset_${P_NUM}.txt" ]; then
+                read -r P_X P_Y < "/mnt/mtd/Config/preset_${P_NUM}.txt"
+                echo "setstep $P_X 20 $P_Y 20" > /proc/XmMotor 2>/dev/null
+                echo "{\"status\": \"ok\", \"message\": \"Переход к пресету $P_NUM ($P_X, $P_Y)\", \"x\": $P_X, \"y\": $P_Y}"
+            else
+                echo "{\"status\": \"error\", \"message\": \"Пресет $P_NUM еще не был сохранен!\"}"
+            fi
+            exit 0
+            ;;
+    esac
+
+    # Read current step positions
+    CURR_X=$(cat /proc/XmMotor | awk '/-------------- motor x/{f=1; next} /-------------- motor y/{f=0} f && /curr step/{print $4}')
+    CURR_Y=$(cat /proc/XmMotor | awk '/-------------- motor y/{f=1} f && /curr step/{print $4}')
+    [ -z "$CURR_X" ] && CURR_X=1975
+    [ -z "$CURR_Y" ] && CURR_Y=718
+
+    NEW_X=$CURR_X
+    NEW_Y=$CURR_Y
+
+    case "$DIR" in
+        DirectionUp|Up|up)
+            NEW_Y=$((CURR_Y + STEP))
+            ;;
+        DirectionDown|Down|down)
+            NEW_Y=$((CURR_Y - STEP))
+            ;;
+        DirectionLeft|Left|left)
+            NEW_X=$((CURR_X - STEP))
+            ;;
+        DirectionRight|Right|right)
+            NEW_X=$((CURR_X + STEP))
+            ;;
+        DirectionUpLeft)
+            NEW_X=$((CURR_X - STEP))
+            NEW_Y=$((CURR_Y + STEP))
+            ;;
+        DirectionUpRight)
+            NEW_X=$((CURR_X + STEP))
+            NEW_Y=$((CURR_Y + STEP))
+            ;;
+        DirectionDownLeft)
+            NEW_X=$((CURR_X - STEP))
+            NEW_Y=$((CURR_Y - STEP))
+            ;;
+        DirectionDownRight)
+            NEW_X=$((CURR_X + STEP))
+            NEW_Y=$((CURR_Y - STEP))
+            ;;
+        DirectionStop|Stop|stop)
+            echo "{\"status\": \"ok\", \"direction\": \"$DIR\"}"
+            exit 0
+            ;;
+    esac
+
+    # Bounds check
+    [ "$NEW_X" -lt 0 ] && NEW_X=0
+    [ "$NEW_X" -gt 3950 ] && NEW_X=3950
+    [ "$NEW_Y" -lt 0 ] && NEW_Y=0
+    [ "$NEW_Y" -gt 1436 ] && NEW_Y=1436
+
+    echo "setstep $NEW_X 20 $NEW_Y 20" > /proc/XmMotor 2>/dev/null
+    echo "{\"status\": \"ok\", \"direction\": \"$DIR\", \"curr_x\": $NEW_X, \"curr_y\": $NEW_Y, \"step\": $STEP}"
+    exit 0
+fi
+
+echo '{"status": "error", "message": "Motor device not available"}'
+exit 0

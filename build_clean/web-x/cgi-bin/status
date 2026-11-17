@@ -1,0 +1,32 @@
+#!/bin/sh
+export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/mnt/custom:/var/tmp:$PATH"
+echo "Content-Type: application/json"
+echo "Access-Control-Allow-Origin: *"
+echo "Connection: close"
+echo ""
+
+if [ -f /var/tmp/wifi_status.json ]; then
+    cat /var/tmp/wifi_status.json
+    exit 0
+fi
+
+IFACE="eth2"
+[ -d "/sys/class/net/wlan0" ] && IFACE="wlan0"
+
+IP=$(ifconfig $IFACE 2>/dev/null | grep 'inet addr' | awk -F: '{print $2}' | awk '{print $1}')
+[ -z "$IP" ] && IP=$(ifconfig eth0 2>/dev/null | grep 'inet addr' | awk -F: '{print $2}' | awk '{print $1}')
+[ -z "$IP" ] && IP="127.0.0.1"
+
+MODE="Client"
+if pidof hostapd >/dev/null 2>&1 || [ "$IP" = "192.168.10.1" ]; then
+    MODE="AccessPoint"
+fi
+
+SSID=""
+if [ "$MODE" = "AccessPoint" ]; then
+    SSID="CleanCam_Setup"
+elif [ -f /mnt/mtd/Config/wpa.conf ]; then
+    SSID=$(grep 'ssid=' /mnt/mtd/Config/wpa.conf 2>/dev/null | head -n1 | cut -d'"' -f2)
+fi
+
+printf '{"ip": "%s", "mode": "%s", "ssid": "%s", "interface": "%s"}\n' "$IP" "$MODE" "$SSID" "$IFACE"

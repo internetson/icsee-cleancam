@@ -1,0 +1,38 @@
+{
+    "NetWork.RTSP": {
+        "Enable": true,
+        "Port": 554
+    },
+    "RTSP": {
+        "Enable": true,
+        "Port": 554
+    },
+    "NetWork.OnvifPwdCheckout": {
+        "Enable": false
+    },
+    "NetWork.DisableXmServerConn": {
+        "Enable": true
+    },
+    "NetWork.NetCommon": {
+        "HostIP": "10.10.11.155",
+        "TCPPort": 34567,
+        "SSLPort": 8443,
+        "HttpPort": 80,
+        "MonMode": "TCP",
+        "MaxBps": 0,
+        "TransferPlan": "Standard"
+    },
+    "NetNTP": {
+        "Enable": true,
+        "Server": {
+            "Address": "0x00000000",
+            "Anonymity": false,
+            "Name": "time.windows.com",
+            "Password": "",
+            "Port": 123,
+            "UserName": ""
+        },
+        "TimeZone": 14,
+        "UpdatePeriod": 10
+    }
+}

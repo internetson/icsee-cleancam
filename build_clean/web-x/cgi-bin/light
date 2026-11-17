@@ -1,0 +1,103 @@
+#!/bin/sh
+export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/mnt/custom:/var/tmp:$PATH"
+echo "Content-Type: application/json; charset=utf-8"
+echo "Access-Control-Allow-Origin: *"
+echo "Connection: close"
+echo ""
+
+SETCFG="/var/tmp/xm_setcfg"
+[ ! -x "$SETCFG" ] && SETCFG="/mnt/custom/xm_setcfg"
+
+DATA="$QUERY_STRING"
+if [ "$REQUEST_METHOD" = "POST" ] && [ -z "$DATA" ]; then
+    read -r -t 1 DATA 2>/dev/null
+fi
+
+urldecode() {
+    echo -e "$(echo "$1" | sed 's/+/ /g;s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')"
+}
+
+get_param() {
+    VAL=$(echo "$DATA" | sed -n "s/.*[?&]$1=\([^&]*\).*/\1/p")
+    [ -z "$VAL" ] && VAL=$(echo "$DATA" | sed -n "s/^$1=\([^&]*\).*/\1/p")
+    urldecode "$VAL"
+}
+
+CFG_FILE="/mnt/mtd/Config/CameraSettings.json"
+
+WHITE=$(get_param "white")
+[ -z "$WHITE" ] && WHITE=$(get_param "spotlight")
+IR=$(get_param "ir")
+[ -z "$IR" ] && IR=$(get_param "night")
+BRI=$(get_param "brightness")
+[ -z "$BRI" ] && BRI=$(get_param "bri")
+[ -z "$BRI" ] && BRI="100"
+
+if [ -n "$WHITE" ]; then
+    case "$WHITE" in
+        on|1|open|true)
+            $SETCFG 1040 "{\"Name\":\"Camera.WhiteLight\",\"Camera.WhiteLight\":{\"WorkMode\":\"Open\",\"Brightness\":$BRI}}" >/dev/null 2>&1
+            sed -i 's/"whitelight_mode": *"[^"]*"/"whitelight_mode": "Open"/' "$CFG_FILE" 2>/dev/null
+            CUR_WHITE="on"
+            ;;
+        off|0|close|false)
+            $SETCFG 1040 '{"Name":"Camera.WhiteLight","Camera.WhiteLight":{"WorkMode":"Close"}}' >/dev/null 2>&1
+            sed -i 's/"whitelight_mode": *"[^"]*"/"whitelight_mode": "Close"/' "$CFG_FILE" 2>/dev/null
+            CUR_WHITE="off"
+            ;;
+        auto)
+            $SETCFG 1040 "{\"Name\":\"Camera.WhiteLight\",\"Camera.WhiteLight\":{\"WorkMode\":\"Auto\",\"Brightness\":$BRI}}" >/dev/null 2>&1
+            sed -i 's/"whitelight_mode": *"[^"]*"/"whitelight_mode": "Auto"/' "$CFG_FILE" 2>/dev/null
+            CUR_WHITE="auto"
+            ;;
+    esac
+fi
+
+if [ -n "$IR" ]; then
+    case "$IR" in
+        on|1|night|true)
+            $SETCFG 1040 '{"Name":"Camera.Param","Camera.Param":[{"DayNightColor":"0x00000002"}]}' >/dev/null 2>&1
+            echo "ircut 1" > /proc/XmMotor 2>/dev/null
+            sed -i 's/"daynight": *"[^"]*"/"daynight": "Night"/' "$CFG_FILE" 2>/dev/null
+            CUR_IR="on"
+            ;;
+        off|0|day|false)
+            $SETCFG 1040 '{"Name":"Camera.Param","Camera.Param":[{"DayNightColor":"0x00000001"}]}' >/dev/null 2>&1
+            echo "ircut 0" > /proc/XmMotor 2>/dev/null
+            sed -i 's/"daynight": *"[^"]*"/"daynight": "Color"/' "$CFG_FILE" 2>/dev/null
+            CUR_IR="off"
+            ;;
+        auto)
+            $SETCFG 1040 '{"Name":"Camera.Param","Camera.Param":[{"DayNightColor":"0x00000005"}]}' >/dev/null 2>&1
+            sed -i 's/"daynight": *"[^"]*"/"daynight": "Auto"/' "$CFG_FILE" 2>/dev/null
+            CUR_IR="auto"
+            ;;
+    esac
+fi
+
+if [ -z "$CUR_WHITE" ]; then
+    RAW_W=$($SETCFG 1042 '{"Name":"Camera.WhiteLight"}' 2>/dev/null)
+    case "$RAW_W" in
+        *Open*) CUR_WHITE="on" ;;
+        *Close*) CUR_WHITE="off" ;;
+        *) CUR_WHITE="auto" ;;
+    esac
+fi
+
+if [ -z "$CUR_IR" ]; then
+    RAW_IR=$($SETCFG 1042 '{"Name":"Camera.Param"}' 2>/dev/null)
+    case "$RAW_IR" in
+        *0x00000002*) CUR_IR="on" ;;
+        *0x00000001*) CUR_IR="off" ;;
+        *) CUR_IR="auto" ;;
+    esac
+fi
+
+cat << EOF
+{
+  "status": "ok",
+  "white": "$CUR_WHITE",
+  "ir": "$CUR_IR",
+  "brightness": $BRI
+}
+EOF

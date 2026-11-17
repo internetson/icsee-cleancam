@@ -1,0 +1,191 @@
+{
+    "Encode": [
+        {
+            "MainFormat": [
+                {
+                    "AudioEnable": true,
+                    "Video": {
+                        "BitRateControl": "VBR",
+                        "Compression": "H.265",
+                        "BitRate": 1024,
+                        "Resolution": "1080P",
+                        "GOP": 4,
+                        "FPS": 12
+                    }
+                },
+                {
+                    "Video": {
+                        "BitRateControl": "VBR",
+                        "Compression": "H.265",
+                        "BitRate": 1024,
+                        "Resolution": "1080P",
+                        "GOP": 4,
+                        "FPS": 12
+                    }
+                },
+                {
+                    "Video": {
+                        "BitRateControl": "VBR",
+                        "Compression": "H.265",
+                        "BitRate": 1024,
+                        "Resolution": "1080P",
+                        "GOP": 4,
+                        "FPS": 12
+                    }
+                }
+            ],
+            "ExtraFormat": [
+                {
+                    "VideoEnable": false,
+                    "AudioEnable": false,
+                    "Video": {
+                        "BitRateControl": "VBR",
+                        "Compression": "H.265",
+                        "BitRate": 552,
+                        "Resolution": "D1",
+                        "GOP": 4,
+                        "FPS": 12
+                    }
+                }
+            ],
+            "EncodeStaticParam": [
+                {
+                    "Level": 41,
+                    "Profile": 2
+                }
+            ],
+            "SnapFormat": [
+                {
+                    "Video": {
+                        "BitRate": 512,
+                        "BitRateControl": "VBR",
+                        "Compression": "H.264",
+                        "FPS": 1,
+                        "GOP": 2,
+                        "Quality": 4,
+                        "Resolution": "D1"
+                    },
+                    "VideoEnable": true
+                },
+                {
+                    "Video": {
+                        "BitRate": 512,
+                        "BitRateControl": "VBR",
+                        "Compression": "H.264",
+                        "FPS": 1,
+                        "GOP": 2,
+                        "Quality": 4,
+                        "Resolution": "D1"
+                    },
+                    "VideoEnable": false
+                },
+                {
+                    "Video": {
+                        "BitRate": 512,
+                        "BitRateControl": "VBR",
+                        "Compression": "H.264",
+                        "FPS": 1,
+                        "GOP": 2,
+                        "Quality": 4,
+                        "Resolution": "D1"
+                    },
+                    "VideoEnable": false
+                }
+            ]
+        }
+    ],
+    "EncodeStaticParam": [
+        {
+            "Level": 41,
+            "Profile": 2
+        }
+    ],
+    "DefinitionCfgTable": {
+        "Table": {
+            "CIF": {
+                "BitrateMap": [
+                    16,
+                    32,
+                    96,
+                    192,
+                    256,
+                    384
+                ],
+                "DefinitionType": 0,
+                "FPS": 12,
+                "GOP": 1,
+                "ImgQuality": 3
+            },
+            "D1": {
+                "BitrateMap": [
+                    96,
+                    192,
+                    256,
+                    384,
+                    448,
+                    512
+                ],
+                "DefinitionType": 1,
+                "FPS": 12,
+                "GOP": 1,
+                "ImgQuality": 3
+            },
+            "720P": {
+                "BitrateMap": [
+                    256,
+                    384,
+                    512,
+                    768,
+                    1024,
+                    1536
+                ],
+                "DefinitionType": 2,
+                "FPS": 12,
+                "GOP": 1,
+                "ImgQuality": 3
+            },
+            "1080P": {
+                "BitrateMap": [
+                    256,
+                    384,
+                    512,
+                    768,
+                    1024,
+                    1536
+                ],
+                "DefinitionType": 3,
+                "FPS": 12,
+                "GOP": 1,
+                "ImgQuality": 3
+            },
+            "3M": {
+                "BitrateMap": [
+                    384,
+                    512,
+                    768,
+                    1024,
+                    1280,
+                    1536
+                ],
+                "DefinitionType": 4,
+                "FPS": 12,
+                "GOP": 1,
+                "ImgQuality": 3
+            },
+            "4M": {
+                "BitrateMap": [
+                    384,
+                    512,
+                    768,
+                    1024,
+                    1280,
+                    1536
+                ],
+                "DefinitionType": 4,
+                "FPS": 12,
+                "GOP": 1,
+                "ImgQuality": 3
+            }
+        }
+    }
+}

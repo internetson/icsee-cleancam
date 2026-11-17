@@ -1,0 +1,60 @@
+#!/bin/sh
+export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/mnt/custom:/var/tmp:$PATH"
+echo "Content-Type: application/json"
+echo "Access-Control-Allow-Origin: *"
+echo "Connection: close"
+echo ""
+
+export LD_LIBRARY_PATH="/mnt/web/lib:/usr/local/lib:/usr/lib:$LD_LIBRARY_PATH"
+
+IFACE="eth2"
+[ -d "/sys/class/net/wlan0" ] && IFACE="wlan0"
+
+# Make sure interface is up before scanning
+ifconfig $IFACE up 2>/dev/null
+
+SCAN_BIN="/mnt/web/iwlist"
+[ ! -x "$SCAN_BIN" ] && SCAN_BIN="iwlist"
+
+SCAN_OUT=$($SCAN_BIN $IFACE scan 2>/dev/null)
+
+if [ -z "$SCAN_OUT" ]; then
+    echo "[]"
+    exit 0
+fi
+
+echo "$SCAN_OUT" | awk '
+BEGIN {
+    print "["
+    first = 1
+    ssid = ""
+    signal = 0
+    enc = "Open"
+}
+/Quality=/ {
+    split($1, a, "=")
+    split(a[2], b, "/")
+    if (b[2] > 0) signal = int((b[1] * 100) / b[2])
+    else signal = b[1]
+}
+/Encryption key:/ {
+    split($0, a, ":")
+    if (a[2] ~ /on/) enc = "WPA/WPA2"
+    else enc = "Open"
+}
+/ESSID:/ {
+    split($0, a, "\"")
+    ssid = a[2]
+    if (length(ssid) > 0) {
+        if (!first) print ","
+        printf "  {\"ssid\": \"%s\", \"signal\": %d, \"security\": \"%s\"}", ssid, signal, enc
+        first = 0
+    }
+    ssid = ""
+    signal = 0
+    enc = "Open"
+}
+END {
+    print "\n]"
+}
+'

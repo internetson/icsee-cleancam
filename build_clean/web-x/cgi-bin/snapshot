@@ -1,0 +1,6 @@
+#!/bin/sh
+if [ -x /var/tmp/xm_snap ]; then
+    exec /var/tmp/xm_snap
+elif [ -x /mnt/custom/xm_snap ]; then
+    exec /mnt/custom/xm_snap
+fi
