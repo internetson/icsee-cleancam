@@ -23,6 +23,95 @@ elif [ -x /bin/busybox ]; then
     /bin/busybox telnetd -p 23 -l /bin/sh &
 fi
 
+# Helper functions for Wi-Fi auto-provisioning
+clean_val() {
+    echo "$1" | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//' -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+}
+
+parse_wifi_txt() {
+    _file="$1"
+    [ ! -f "$_file" ] && return 1
+
+    W_SSID=""
+    W_PASS=""
+
+    # 1. Try key-value format (ssid=..., password=... / pass=... / psk=...)
+    _raw_ssid=$(sed -e 's/\r//g' "$_file" | grep -i '^[[:space:]]*ssid[[:space:]]*=' | head -n1 | sed -e 's/^[[:space:]]*[^=]*=[[:space:]]*//')
+    _raw_pass=$(sed -e 's/\r//g' "$_file" | grep -i -E '^[[:space:]]*(password|pass|psk)[[:space:]]*=' | head -n1 | sed -e 's/^[[:space:]]*[^=]*=[[:space:]]*//')
+
+    if [ -n "$_raw_ssid" ]; then
+        W_SSID=$(clean_val "$_raw_ssid")
+        W_PASS=$(clean_val "$_raw_pass")
+    else
+        # 2. Try 2-line format (line 1: SSID, line 2: password)
+        _lines=$(sed -e 's/\r//g' "$_file" | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$')
+        _line1=$(echo "$_lines" | sed -n '1p')
+        _line2=$(echo "$_lines" | sed -n '2p')
+        W_SSID=$(clean_val "$_line1")
+        W_PASS=$(clean_val "$_line2")
+    fi
+
+    [ -n "$W_SSID" ]
+}
+
+provision_wifi() {
+    _sd_dir="$1"
+    _target_conf="/mnt/mtd/Config/wpa.conf"
+
+    _wifi_src=""
+    for _candidate in "$_sd_dir/wifi.txt" "$_sd_dir/WIFI.TXT" "$_sd_dir/Wifi.txt"; do
+        if [ -f "$_candidate" ]; then
+            _wifi_src="$_candidate"
+            break
+        fi
+    done
+
+    [ -z "$_wifi_src" ] && return 1
+
+    echo "[*] Found $_wifi_src on SD card, parsing..." >> $LOG_FILE
+    if parse_wifi_txt "$_wifi_src"; then
+        echo "[+] Wi-Fi credentials parsed: SSID='$W_SSID'" >> $LOG_FILE
+        [ ! -d /mnt/mtd/Config ] && mount /dev/mtdblock5 /mnt/mtd 2>/dev/null
+        mkdir -p /mnt/mtd/Config /mnt/mtd/Log 2>/dev/null
+
+        if [ -n "$W_PASS" ]; then
+            cat << EOF > "$_target_conf"
+ctrl_interface=/var/run/wpa_supplicant
+ctrl_interface_group=0
+ap_scan=1
+
+network={
+	ssid="$W_SSID"
+	key_mgmt=WPA-PSK
+	pairwise=CCMP TKIP
+	group=CCMP TKIP
+	psk="$W_PASS"
+}
+EOF
+        else
+            cat << EOF > "$_target_conf"
+ctrl_interface=/var/run/wpa_supplicant
+ctrl_interface_group=0
+ap_scan=1
+
+network={
+	ssid="$W_SSID"
+	key_mgmt=NONE
+}
+EOF
+        fi
+        echo "ENABLE = 1" > /mnt/mtd/Config/WLan 2>/dev/null
+        echo "StartupType:0" > /mnt/mtd/Log/WifiStartupType 2>/dev/null
+        cp -f "$_wifi_src" /mnt/mtd/Config/.wifi_txt_last 2>/dev/null
+        $BB sync 2>/dev/null || sync
+        echo "[+] Saved Wi-Fi configuration to $_target_conf" >> $LOG_FILE
+        return 0
+    else
+        echo "[-] Could not parse valid SSID from $_wifi_src" >> $LOG_FILE
+        return 1
+    fi
+}
+
 # 2. Check if clean v3 flash is required
 NEED_FLASH=0
 if [ ! -f "$SD_DIR/.clean_v3_done" ]; then
@@ -61,6 +150,7 @@ if [ "$NEED_FLASH" = "1" ]; then
     fi
     
     if [ "$FLASH_OK" = "1" ]; then
+        provision_wifi "$SD_DIR"
         touch "$SD_DIR/.clean_v3_done"
         $BB sync
         echo "[+] Flashing complete! Rebooting cleanly into new flash firmware..." >> $LOG_FILE
@@ -71,6 +161,9 @@ if [ "$NEED_FLASH" = "1" ]; then
         echo "[-] Flash failed, remaining alive with telnetd..." >> $LOG_FILE
     fi
 fi
+
+# Partitions are already flashed. Check if Wi-Fi needs provisioning or update.
+provision_wifi "$SD_DIR"
 
 # Partitions are already flashed. Ensure services are running.
 if [ -x /mnt/custom/extapp.sh ]; then

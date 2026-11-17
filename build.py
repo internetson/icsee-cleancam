@@ -145,6 +145,7 @@ def package_dist():
         ("xm_autorun.sh", os.path.join(SD_INSTALLER_DIR, "xm_autorun.sh")),
         ("xm_flasher", os.path.join(SD_INSTALLER_DIR, "xm_flasher")),
         ("busybox", os.path.join(SD_INSTALLER_DIR, "busybox")),
+        ("wifi.txt.example", os.path.join(SD_INSTALLER_DIR, "wifi.txt.example")),
         ("custom-x.squashfs", os.path.join(BUILD_DIR, "custom-x.squashfs")),
         ("web-x.squashfs", os.path.join(BUILD_DIR, "web-x.squashfs")),
     ]
@@ -165,18 +166,28 @@ def package_dist():
    - xm_autorun.sh
    - xm_flasher
    - busybox
+   - wifi.txt.example
    - custom-x.squashfs
    - web-x.squashfs
-3. Вставьте карту памяти в выключенную камеру.
-4. Включите питание камеры. Скрипт xm_autorun.sh автоматически прошьет
+
+3. (Опционально) Автонастройка Wi-Fi:
+   Переименуйте wifi.txt.example в wifi.txt и укажите имя сети и пароль:
+   ssid=ИмяСети
+   password=Пароль
+   Тогда камера сразу после прошивки подключится к вашей домашней сети!
+
+4. Вставьте карту памяти в выключенную камеру.
+5. Включите питание камеры. Скрипт xm_autorun.sh автоматически прошьет
    разделы mtd4 (custom) и mtd3 (web) и перезагрузит камеру (~15-30 секунд).
-5. Извлеките карту памяти.
-6. Камера готова к работе:
+6. Извлеките карту памяти (или оставьте для автонастройки Wi-Fi).
+7. Камера готова к работе:
    - Веб-интерфейс: http://<IP_КАМЕРЫ>/ (admin / admin)
    - RTSP Main:     rtsp://<IP_КАМЕРЫ>:554/live/ch0
    - RTSP Sub:      rtsp://<IP_КАМЕРЫ>:554/live/ch1
    - ONVIF порт:    8899 (admin / admin)
    - Telnet (Root): telnet <IP_КАМЕРЫ> 23 (логин root, без пароля)
+
+Если wifi.txt не был создан, камера создаст точку доступа CleanCam_Setup (192.168.10.1).
 """
         zf.writestr("ИНСТРУКЦИЯ.txt", readme_txt.encode("utf-8"))
         print("    + ИНСТРУКЦИЯ.txt")

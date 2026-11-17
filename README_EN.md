@@ -84,16 +84,29 @@ Flashing partitions `custom` (`mtd4`, 192 KB) and `web` (`mtd3`, 128 KB) is comp
    ├── xm_autorun.sh       # Auto-deployment script
    ├── xm_flasher          # Autonomous SPI Flash flasher binary
    ├── busybox             # Command-line tools
+   ├── wifi.txt.example    # Wi-Fi auto-configuration template
    ├── custom-x.squashfs   # Services and configuration partition image (mtd4)
    └── web-x.squashfs      # WebUI and CGI scripts partition image (mtd3)
    ```
-4. Insert the card into the **powered-off** camera.
-5. Connect camera power. The `xm_autorun.sh` script will:
+4. **(Optional) Automatic Wi-Fi provisioning for mass deployments:**
+   If you have multiple cameras or prefer skipping manual setup via the `CleanCam_Setup` AP:
+   - Rename `wifi.txt.example` to **`wifi.txt`** (or create it in the root of the card).
+   - Enter your network credentials:
+     ```ini
+     ssid=MyHomeWiFi
+     password=MySecretPassword
+     ```
+     *(A plain two-line format is also supported: line 1 SSID, line 2 password).*
+   - The installer automatically applies the network configuration into non-volatile storage, so the camera connects directly to your home network right after the reboot!
+5. Insert the card into the **powered-off** camera.
+6. Connect camera power. The `xm_autorun.sh` script will:
    * Launch Root Telnet on port 23.
    * Erase and reflash `/dev/mtd4` and `/dev/mtd3`.
+   * Automatically import network credentials from `wifi.txt` (if present).
    * Safely reboot into CleanCam OS (~20–30 seconds).
-6. Remove the MicroSD card.
-7. Open `http://<CAMERA_IP>/` in your browser (login: `admin`, password: `admin`).
+7. Remove the MicroSD card (or leave it in the slot).
+8. Open `http://<CAMERA_IP>/` in your browser (login: `admin`, password: `admin`).
+   *(If `wifi.txt` was not provided, connect your phone or laptop to the open `CleanCam_Setup` AP at `192.168.10.1`).*
 
 > [!NOTE]
 > If you forget your password or change your Wi-Fi router, hold down the physical **Reset** button for **10 seconds** - the camera will reset credentials to `admin/admin` and launch the fallback `CleanCam_Setup` AP.

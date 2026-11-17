@@ -28,6 +28,90 @@ fi
 DHCP_SCRIPT="/var/tmp/udhcpc.script"
 [ ! -f "$DHCP_SCRIPT" ] && DHCP_SCRIPT="/mnt/custom/default.script"
 
+clean_val() {
+    echo "$1" | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//' -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+}
+
+parse_wifi_file() {
+    _file="$1"
+    [ ! -f "$_file" ] && return 1
+
+    W_SSID=""
+    W_PASS=""
+
+    _raw_ssid=$(sed -e 's/\r//g' "$_file" | grep -i '^[[:space:]]*ssid[[:space:]]*=' | head -n1 | sed -e 's/^[[:space:]]*[^=]*=[[:space:]]*//')
+    _raw_pass=$(sed -e 's/\r//g' "$_file" | grep -i -E '^[[:space:]]*(password|pass|psk)[[:space:]]*=' | head -n1 | sed -e 's/^[[:space:]]*[^=]*=[[:space:]]*//')
+
+    if [ -n "$_raw_ssid" ]; then
+        W_SSID=$(clean_val "$_raw_ssid")
+        W_PASS=$(clean_val "$_raw_pass")
+    else
+        _lines=$(sed -e 's/\r//g' "$_file" | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$')
+        _line1=$(echo "$_lines" | sed -n '1p')
+        _line2=$(echo "$_lines" | sed -n '2p')
+        W_SSID=$(clean_val "$_line1")
+        W_PASS=$(clean_val "$_line2")
+    fi
+
+    [ -n "$W_SSID" ]
+}
+
+import_sd_wifi() {
+    _sd_file=""
+    for _candidate in /var/tmp/mmcblock0/wifi.txt /var/tmp/mmcblock0/WIFI.TXT /var/tmp/mmcblock0/Wifi.txt; do
+        if [ -f "$_candidate" ]; then
+            _sd_file="$_candidate"
+            break
+        fi
+    done
+
+    [ -z "$_sd_file" ] && return 1
+
+    _last_file="/mnt/mtd/Config/.wifi_txt_last"
+    if [ -f "$_last_file" ] && [ -f "$WIFI_CONF" ]; then
+        if [ "$(cat "$_sd_file" 2>/dev/null)" = "$(cat "$_last_file" 2>/dev/null)" ]; then
+            return 1
+        fi
+    fi
+
+    if parse_wifi_file "$_sd_file"; then
+        echo "[WiFi-Mgr] Auto-provisioning Wi-Fi from SD card ($_sd_file): SSID='$W_SSID'..."
+        mkdir -p /mnt/mtd/Config /mnt/mtd/Log 2>/dev/null
+        if [ -n "$W_PASS" ]; then
+            cat << EOF > "$WIFI_CONF"
+ctrl_interface=/var/run/wpa_supplicant
+ctrl_interface_group=0
+ap_scan=1
+
+network={
+	ssid="$W_SSID"
+	key_mgmt=WPA-PSK
+	pairwise=CCMP TKIP
+	group=CCMP TKIP
+	psk="$W_PASS"
+}
+EOF
+        else
+            cat << EOF > "$WIFI_CONF"
+ctrl_interface=/var/run/wpa_supplicant
+ctrl_interface_group=0
+ap_scan=1
+
+network={
+	ssid="$W_SSID"
+	key_mgmt=NONE
+}
+EOF
+        fi
+        echo "ENABLE = 1" > /mnt/mtd/Config/WLan 2>/dev/null
+        echo "StartupType:0" > /mnt/mtd/Log/WifiStartupType 2>/dev/null
+        cp -f "$_sd_file" "$_last_file" 2>/dev/null
+        sync
+        return 0
+    fi
+    return 1
+}
+
 save_status() {
     _mode="$1"
     _ip="$2"
@@ -127,6 +211,7 @@ EOF
 }
 
 # Initial Boot Decision
+import_sd_wifi
 if [ -f "$WIFI_CONF" ] && grep -q 'ssid=' "$WIFI_CONF"; then
     start_client_mode
 else
@@ -138,6 +223,14 @@ fi
 FAIL_COUNT=0
 while true; do
     sleep 15
+
+    # Check if a new or updated wifi.txt was placed on SD card
+    if import_sd_wifi; then
+        echo "[WiFi-Mgr] New Wi-Fi configuration from SD card detected! Reconnecting..."
+        start_client_mode
+        FAIL_COUNT=0
+        continue
+    fi
 
     # Ensure web and telnet servers are alive
     if ! pidof xm_httpd >/dev/null 2>&1; then
