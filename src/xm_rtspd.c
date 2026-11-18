@@ -176,9 +176,10 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
         uint8_t orig_byte0 = nal[0];
         uint8_t orig_byte1 = nal[1];
         uint8_t orig_tid = orig_byte1 & 0x07;
+        if (orig_tid == 0) orig_tid = 1; // RFC 7798: nuh_temporal_id_plus1 must be >= 1
         uint8_t fu_ind[2];
-        fu_ind[0] = (49 << 1);
-        fu_ind[1] = orig_tid;
+        fu_ind[0] = (orig_byte0 & 0x81) | (49 << 1);
+        fu_ind[1] = (orig_byte1 & 0xF8) | orig_tid;
 
         const uint8_t *payload = nal + 2;
         size_t payload_len = len - 2;

@@ -36,7 +36,7 @@
             ],
             "ExtraFormat": [
                 {
-                    "VideoEnable": false,
+                    "VideoEnable": true,
                     "AudioEnable": false,
                     "Video": {
                         "BitRateControl": "VBR",
