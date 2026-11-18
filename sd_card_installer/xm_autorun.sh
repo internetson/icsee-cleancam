@@ -115,7 +115,17 @@ EOF
 restore_default_accounts() {
     [ ! -d /mnt/mtd/Config ] && mount /dev/mtdblock5 /mnt/mtd 2>/dev/null
     mkdir -p /mnt/mtd/Config 2>/dev/null
-    if [ ! -f /mnt/mtd/Config/Account1 ] || ! grep -q '"Name" : "admin"' /mnt/mtd/Config/Account1 2>/dev/null; then
+
+    _need_restore=0
+    if [ "$1" = "force" ] || [ ! -f /mnt/mtd/Config/Account1 ] || [ ! -f /mnt/mtd/Config/Account2 ]; then
+        _need_restore=1
+    elif ! grep -q '"Memo" : "admin account"' /mnt/mtd/Config/Account1 2>/dev/null; then
+        _need_restore=1
+    elif grep -q '"Token"' /mnt/mtd/Config/Account1 2>/dev/null; then
+        _need_restore=1
+    fi
+
+    if [ "$_need_restore" = "1" ]; then
         echo "[*] Restoring clean default DVRIP accounts for xm_rtspd..." >> $LOG_FILE
         cat << 'EOF' > /mnt/mtd/Config/Account1
 {
@@ -220,7 +230,7 @@ if [ "$NEED_FLASH" = "1" ]; then
     
     if [ "$FLASH_OK" = "1" ]; then
         provision_wifi "$SD_DIR"
-        restore_default_accounts
+        restore_default_accounts force
         touch "/mnt/mtd/.cleancam_done"
         rm -f "$SD_DIR/.clean_v3_done" "$SD_DIR/force_flash" 2>/dev/null
         $BB sync 2>/dev/null || sync

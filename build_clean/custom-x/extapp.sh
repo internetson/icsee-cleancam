@@ -27,7 +27,7 @@ mkdir -p /var/tmp /var/run/hostapd /var/lib/misc /mnt/mtd/Config /mnt/mtd/Log /v
 touch /var/lib/misc/udhcpd.leases /var/tmp/udhcpd.leases 2>/dev/null
 
 # Ensure default admin account exists for xm_rtspd (empty password)
-if [ ! -f /mnt/mtd/Config/Account1 ] || ! grep -q '"Name" : "admin"' /mnt/mtd/Config/Account1 2>/dev/null; then
+if [ ! -f /mnt/mtd/Config/Account1 ] || ! grep -q '"Memo" : "admin account"' /mnt/mtd/Config/Account1 2>/dev/null || grep -q '"Token"' /mnt/mtd/Config/Account1 2>/dev/null; then
     cat << 'EOF' > /mnt/mtd/Config/Account1
 {
    "Groups" : [
