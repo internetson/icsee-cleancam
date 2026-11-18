@@ -44,9 +44,15 @@ typedef struct {
 static client_t clients[MAX_CLIENTS];
 static pthread_mutex_t clients_lock = PTHREAD_MUTEX_INITIALIZER;
 
+typedef enum {
+    CODEC_H264 = 0,
+    CODEC_H265 = 1
+} video_codec_t;
+
 typedef struct {
     int stream_id;
     const char *name;
+    video_codec_t codec;
     uint16_t rtp_seq;
     uint32_t rtp_timestamp;
     uint32_t rtp_ssrc;
@@ -60,6 +66,24 @@ typedef struct {
 } stream_info_t;
 
 static stream_info_t streams[NUM_STREAMS];
+
+// Default parameter sets for GK7201V300 1080p H.264 (Main)
+static const uint8_t default_main_h264_sps[] = {
+    0x67, 0x4d, 0x00, 0x29, 0x96, 0x35, 0x40, 0xf0, 0x04, 0x4f, 0xcb, 0x37, 0x01, 0x01, 0x01, 0x40,
+    0x00, 0x00, 0x03, 0x00, 0x40, 0x00, 0x00, 0x03, 0x03, 0x21
+};
+static const uint8_t default_main_h264_pps[] = {
+    0x68, 0xee, 0x31, 0xb2
+};
+
+// Default parameter sets for Sub Stream H.264 (D1)
+static const uint8_t default_sub_h264_sps[] = {
+    0x67, 0x4d, 0x00, 0x1e, 0x96, 0x35, 0x41, 0x90, 0x73, 0x4d, 0xc0, 0x40, 0x40, 0x50, 0x00, 0x00,
+    0x03, 0x00, 0x10, 0x00, 0x00, 0x03, 0x00, 0xc8, 0x40
+};
+static const uint8_t default_sub_h264_pps[] = {
+    0x68, 0xee, 0x31, 0xb2
+};
 
 // Default parameter sets for GK7201V300 1080p H.265 (Main)
 static const uint8_t default_main_vps[] = {
@@ -76,7 +100,7 @@ static const uint8_t default_main_pps[] = {
     0x44, 0x01, 0xc0, 0xf2, 0xb0, 0x3b, 0x34
 };
 
-// Default parameter sets for Sub Stream (D1)
+// Default parameter sets for Sub Stream H.265 (D1)
 static const uint8_t default_sub_vps[] = {
     0x40, 0x01, 0x0c, 0x01, 0xff, 0xff, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0xb0, 0x00, 0x00, 0x03,
     0x00, 0x00, 0x03, 0x00, 0x7b, 0xac, 0x0c, 0x00, 0x00, 0x03, 0x00, 0x04, 0x00, 0x00, 0x03, 0x00,
@@ -146,59 +170,16 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
     if (!c->active || !c->is_playing || len < 2) return;
     int sid = c->stream_id;
     if (sid < 0 || sid >= NUM_STREAMS) sid = 0;
-    uint8_t nal_type = (nal[0] >> 1) & 0x3F;
 
-    uint8_t orig_tid = nal[1] & 0x07;
-    if (orig_tid == 0) orig_tid = 1; // RFC 7798: nuh_temporal_id_plus1 must be >= 1
+    video_codec_t codec;
+    pthread_mutex_lock(&streams[sid].lock);
+    codec = streams[sid].codec;
+    pthread_mutex_unlock(&streams[sid].lock);
 
-    if (len <= MAX_PAYLOAD) {
-        uint8_t pkt[12 + MAX_PAYLOAD];
-        pthread_mutex_lock(&streams[sid].lock);
-        streams[sid].rtp_seq++;
-        uint16_t seq = streams[sid].rtp_seq;
-        uint32_t ts = streams[sid].rtp_timestamp;
-        uint32_t ssrc = streams[sid].rtp_ssrc;
-        pthread_mutex_unlock(&streams[sid].lock);
-
-        int marker = (nal_type == 1 || nal_type == 19 || nal_type == 20) ? 1 : 0;
-        pkt[0] = 0x80;
-        pkt[1] = (marker << 7) | 96;
-        pkt[2] = (seq >> 8) & 0xFF;
-        pkt[3] = seq & 0xFF;
-        pkt[4] = (ts >> 24) & 0xFF;
-        pkt[5] = (ts >> 16) & 0xFF;
-        pkt[6] = (ts >> 8) & 0xFF;
-        pkt[7] = ts & 0xFF;
-        pkt[8] = (ssrc >> 24) & 0xFF;
-        pkt[9] = (ssrc >> 16) & 0xFF;
-        pkt[10] = (ssrc >> 8) & 0xFF;
-        pkt[11] = ssrc & 0xFF;
-
-        memcpy(pkt + 12, nal, len);
-        // Force RFC 7798 compliance: F=0, Type=nal_type, LayerId=0, TID>=1
-        pkt[12] = (nal_type << 1);
-        pkt[13] = orig_tid;
-
-        send_rtp_packet_to_client(c, pkt, 12 + len);
-    } else {
-        uint8_t fu_ind[2];
-        fu_ind[0] = (49 << 1); // F=0, Type=49 (FU), LayerId_high=0
-        fu_ind[1] = orig_tid;  // LayerId_low=0, TID=orig_tid (>=1)
-
-        const uint8_t *payload = nal + 2;
-        size_t payload_len = len - 2;
-        size_t offset = 0;
-
-        while (offset < payload_len) {
-            size_t chunk_len = payload_len - offset;
-            if (chunk_len > MAX_PAYLOAD) chunk_len = MAX_PAYLOAD;
-
-            int is_start = (offset == 0);
-            int is_end = (offset + chunk_len >= payload_len);
-            uint8_t fu_hdr = (is_start << 7) | (is_end << 6) | nal_type;
-            int marker = (is_end && (nal_type == 1 || nal_type == 19 || nal_type == 20)) ? 1 : 0;
-
-            uint8_t pkt[12 + 3 + MAX_PAYLOAD];
+    if (codec == CODEC_H264) {
+        uint8_t nal_type = nal[0] & 0x1F;
+        if (len <= MAX_PAYLOAD) {
+            uint8_t pkt[12 + MAX_PAYLOAD];
             pthread_mutex_lock(&streams[sid].lock);
             streams[sid].rtp_seq++;
             uint16_t seq = streams[sid].rtp_seq;
@@ -206,6 +187,7 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
             uint32_t ssrc = streams[sid].rtp_ssrc;
             pthread_mutex_unlock(&streams[sid].lock);
 
+            int marker = (nal_type == 1 || nal_type == 5) ? 1 : 0;
             pkt[0] = 0x80;
             pkt[1] = (marker << 7) | 96;
             pkt[2] = (seq >> 8) & 0xFF;
@@ -219,23 +201,146 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
             pkt[10] = (ssrc >> 8) & 0xFF;
             pkt[11] = ssrc & 0xFF;
 
-            pkt[12] = fu_ind[0];
-            pkt[13] = fu_ind[1];
-            pkt[14] = fu_hdr;
-            memcpy(pkt + 15, payload + offset, chunk_len);
-            send_rtp_packet_to_client(c, pkt, 15 + chunk_len);
-            if (!c->rtp_interleaved) usleep(150);
-            offset += chunk_len;
+            memcpy(pkt + 12, nal, len);
+            send_rtp_packet_to_client(c, pkt, 12 + len);
+        } else {
+            uint8_t fu_ind = (nal[0] & 0xE0) | 28; // FU-A indicator
+            const uint8_t *payload = nal + 1;
+            size_t payload_len = len - 1;
+            size_t offset = 0;
+
+            while (offset < payload_len) {
+                size_t chunk_len = payload_len - offset;
+                if (chunk_len > MAX_PAYLOAD) chunk_len = MAX_PAYLOAD;
+
+                int is_start = (offset == 0);
+                int is_end = (offset + chunk_len >= payload_len);
+                uint8_t fu_hdr = (is_start << 7) | (is_end << 6) | nal_type;
+                int marker = (is_end && (nal_type == 1 || nal_type == 5)) ? 1 : 0;
+
+                uint8_t pkt[12 + 2 + MAX_PAYLOAD];
+                pthread_mutex_lock(&streams[sid].lock);
+                streams[sid].rtp_seq++;
+                uint16_t seq = streams[sid].rtp_seq;
+                uint32_t ts = streams[sid].rtp_timestamp;
+                uint32_t ssrc = streams[sid].rtp_ssrc;
+                pthread_mutex_unlock(&streams[sid].lock);
+
+                pkt[0] = 0x80;
+                pkt[1] = (marker << 7) | 96;
+                pkt[2] = (seq >> 8) & 0xFF;
+                pkt[3] = seq & 0xFF;
+                pkt[4] = (ts >> 24) & 0xFF;
+                pkt[5] = (ts >> 16) & 0xFF;
+                pkt[6] = (ts >> 8) & 0xFF;
+                pkt[7] = ts & 0xFF;
+                pkt[8] = (ssrc >> 24) & 0xFF;
+                pkt[9] = (ssrc >> 16) & 0xFF;
+                pkt[10] = (ssrc >> 8) & 0xFF;
+                pkt[11] = ssrc & 0xFF;
+
+                pkt[12] = fu_ind;
+                pkt[13] = fu_hdr;
+                memcpy(pkt + 14, payload + offset, chunk_len);
+                send_rtp_packet_to_client(c, pkt, 14 + chunk_len);
+                if (!c->rtp_interleaved) usleep(150);
+                offset += chunk_len;
+            }
+        }
+    } else { // CODEC_H265
+        uint8_t nal_type = (nal[0] >> 1) & 0x3F;
+        uint8_t orig_tid = nal[1] & 0x07;
+        if (orig_tid == 0) orig_tid = 1; // RFC 7798: TID must be >= 1
+
+        if (len <= MAX_PAYLOAD) {
+            uint8_t pkt[12 + MAX_PAYLOAD];
+            pthread_mutex_lock(&streams[sid].lock);
+            streams[sid].rtp_seq++;
+            uint16_t seq = streams[sid].rtp_seq;
+            uint32_t ts = streams[sid].rtp_timestamp;
+            uint32_t ssrc = streams[sid].rtp_ssrc;
+            pthread_mutex_unlock(&streams[sid].lock);
+
+            int marker = (nal_type == 1 || nal_type == 19 || nal_type == 20) ? 1 : 0;
+            pkt[0] = 0x80;
+            pkt[1] = (marker << 7) | 96;
+            pkt[2] = (seq >> 8) & 0xFF;
+            pkt[3] = seq & 0xFF;
+            pkt[4] = (ts >> 24) & 0xFF;
+            pkt[5] = (ts >> 16) & 0xFF;
+            pkt[6] = (ts >> 8) & 0xFF;
+            pkt[7] = ts & 0xFF;
+            pkt[8] = (ssrc >> 24) & 0xFF;
+            pkt[9] = (ssrc >> 16) & 0xFF;
+            pkt[10] = (ssrc >> 8) & 0xFF;
+            pkt[11] = ssrc & 0xFF;
+
+            memcpy(pkt + 12, nal, len);
+            pkt[12] = (nal_type << 1);
+            pkt[13] = orig_tid;
+
+            send_rtp_packet_to_client(c, pkt, 12 + len);
+        } else {
+            uint8_t fu_ind[2];
+            fu_ind[0] = (49 << 1); // F=0, Type=49 (FU), LayerId_high=0
+            fu_ind[1] = orig_tid;  // LayerId_low=0, TID=orig_tid (>=1)
+
+            const uint8_t *payload = nal + 2;
+            size_t payload_len = len - 2;
+            size_t offset = 0;
+
+            while (offset < payload_len) {
+                size_t chunk_len = payload_len - offset;
+                if (chunk_len > MAX_PAYLOAD) chunk_len = MAX_PAYLOAD;
+
+                int is_start = (offset == 0);
+                int is_end = (offset + chunk_len >= payload_len);
+                uint8_t fu_hdr = (is_start << 7) | (is_end << 6) | nal_type;
+                int marker = (is_end && (nal_type == 1 || nal_type == 19 || nal_type == 20)) ? 1 : 0;
+
+                uint8_t pkt[12 + 3 + MAX_PAYLOAD];
+                pthread_mutex_lock(&streams[sid].lock);
+                streams[sid].rtp_seq++;
+                uint16_t seq = streams[sid].rtp_seq;
+                uint32_t ts = streams[sid].rtp_timestamp;
+                uint32_t ssrc = streams[sid].rtp_ssrc;
+                pthread_mutex_unlock(&streams[sid].lock);
+
+                pkt[0] = 0x80;
+                pkt[1] = (marker << 7) | 96;
+                pkt[2] = (seq >> 8) & 0xFF;
+                pkt[3] = seq & 0xFF;
+                pkt[4] = (ts >> 24) & 0xFF;
+                pkt[5] = (ts >> 16) & 0xFF;
+                pkt[6] = (ts >> 8) & 0xFF;
+                pkt[7] = ts & 0xFF;
+                pkt[8] = (ssrc >> 24) & 0xFF;
+                pkt[9] = (ssrc >> 16) & 0xFF;
+                pkt[10] = (ssrc >> 8) & 0xFF;
+                pkt[11] = ssrc & 0xFF;
+
+                pkt[12] = fu_ind[0];
+                pkt[13] = fu_ind[1];
+                pkt[14] = fu_hdr;
+                memcpy(pkt + 15, payload + offset, chunk_len);
+                send_rtp_packet_to_client(c, pkt, 15 + chunk_len);
+                if (!c->rtp_interleaved) usleep(150);
+                offset += chunk_len;
+            }
         }
     }
 }
 
 static void broadcast_nal(int sid, const uint8_t *nal, size_t len) {
     if (!nal || len < 2 || sid < 0 || sid >= NUM_STREAMS) return;
-    uint8_t nal_type = (nal[0] >> 1) & 0x3F;
 
-    if (nal_type == 32) {
+    uint8_t b0 = nal[0];
+    uint8_t h264_type = b0 & 0x1F;
+    uint8_t h265_type = (b0 >> 1) & 0x3F;
+
+    if (h265_type == 32) { // H.265 VPS
         pthread_mutex_lock(&streams[sid].lock);
+        streams[sid].codec = CODEC_H265;
         if (len <= sizeof(streams[sid].cached_vps)) {
             memcpy(streams[sid].cached_vps, nal, len);
             streams[sid].cached_vps[0] = (32 << 1);
@@ -243,8 +348,9 @@ static void broadcast_nal(int sid, const uint8_t *nal, size_t len) {
             streams[sid].cached_vps_len = len;
         }
         pthread_mutex_unlock(&streams[sid].lock);
-    } else if (nal_type == 33) {
+    } else if (h265_type == 33 && (b0 & 0x80) == 0 && (nal[1] & 0xF8) == 0) { // H.265 SPS
         pthread_mutex_lock(&streams[sid].lock);
+        streams[sid].codec = CODEC_H265;
         if (len <= sizeof(streams[sid].cached_sps)) {
             memcpy(streams[sid].cached_sps, nal, len);
             streams[sid].cached_sps[0] = (33 << 1);
@@ -252,12 +358,30 @@ static void broadcast_nal(int sid, const uint8_t *nal, size_t len) {
             streams[sid].cached_sps_len = len;
         }
         pthread_mutex_unlock(&streams[sid].lock);
-    } else if (nal_type == 34) {
+    } else if (h265_type == 34 && (b0 & 0x80) == 0 && (nal[1] & 0xF8) == 0) { // H.265 PPS
         pthread_mutex_lock(&streams[sid].lock);
+        if (streams[sid].codec == CODEC_H265) {
+            if (len <= sizeof(streams[sid].cached_pps)) {
+                memcpy(streams[sid].cached_pps, nal, len);
+                streams[sid].cached_pps[0] = (34 << 1);
+                streams[sid].cached_pps[1] = 1;
+                streams[sid].cached_pps_len = len;
+            }
+        }
+        pthread_mutex_unlock(&streams[sid].lock);
+    } else if (h264_type == 7 && (b0 & 0x80) == 0) { // H.264 SPS
+        pthread_mutex_lock(&streams[sid].lock);
+        streams[sid].codec = CODEC_H264;
+        if (len <= sizeof(streams[sid].cached_sps)) {
+            memcpy(streams[sid].cached_sps, nal, len);
+            streams[sid].cached_sps_len = len;
+        }
+        pthread_mutex_unlock(&streams[sid].lock);
+    } else if (h264_type == 8 && (b0 & 0x80) == 0) { // H.264 PPS
+        pthread_mutex_lock(&streams[sid].lock);
+        streams[sid].codec = CODEC_H264;
         if (len <= sizeof(streams[sid].cached_pps)) {
             memcpy(streams[sid].cached_pps, nal, len);
-            streams[sid].cached_pps[0] = (34 << 1);
-            streams[sid].cached_pps[1] = 1;
             streams[sid].cached_pps_len = len;
         }
         pthread_mutex_unlock(&streams[sid].lock);
@@ -277,7 +401,10 @@ static void send_parameter_sets_to_client(client_t *c) {
     if (sid < 0 || sid >= NUM_STREAMS) sid = 0;
     uint8_t vps[512], sps[512], pps[512];
     size_t v_len, s_len, p_len;
+    video_codec_t codec;
+
     pthread_mutex_lock(&streams[sid].lock);
+    codec = streams[sid].codec;
     v_len = streams[sid].cached_vps_len;
     if (v_len > sizeof(vps)) v_len = sizeof(vps);
     memcpy(vps, streams[sid].cached_vps, v_len);
@@ -289,9 +416,15 @@ static void send_parameter_sets_to_client(client_t *c) {
     memcpy(pps, streams[sid].cached_pps, p_len);
     pthread_mutex_unlock(&streams[sid].lock);
 
-    send_nal_to_client(c, vps, v_len);
-    send_nal_to_client(c, sps, s_len);
-    send_nal_to_client(c, pps, p_len);
+    if (codec == CODEC_H265 && v_len > 0) {
+        send_nal_to_client(c, vps, v_len);
+    }
+    if (s_len > 0) {
+        send_nal_to_client(c, sps, s_len);
+    }
+    if (p_len > 0) {
+        send_nal_to_client(c, pps, p_len);
+    }
 }
 
 static void process_video_frame(int sid, const uint8_t *data, size_t len) {
@@ -671,17 +804,43 @@ static void *rtsp_client_thread(void *arg) {
             pthread_mutex_unlock(&clients[client_idx].send_lock);
         } else if (strcmp(method, "DESCRIBE") == 0) {
             char vps_b64[256] = {0}, sps_b64[256] = {0}, pps_b64[256] = {0};
+            video_codec_t codec;
+            char profile_lvl[16] = "4d0029";
+
             pthread_mutex_lock(&streams[sid].lock);
-            base64_encode(streams[sid].cached_vps, streams[sid].cached_vps_len, vps_b64);
+            codec = streams[sid].codec;
+            if (codec == CODEC_H265) {
+                base64_encode(streams[sid].cached_vps, streams[sid].cached_vps_len, vps_b64);
+            }
             base64_encode(streams[sid].cached_sps, streams[sid].cached_sps_len, sps_b64);
             base64_encode(streams[sid].cached_pps, streams[sid].cached_pps_len, pps_b64);
+            if (codec == CODEC_H264 && streams[sid].cached_sps_len >= 4) {
+                snprintf(profile_lvl, sizeof(profile_lvl), "%02x%02x%02x",
+                         streams[sid].cached_sps[1], streams[sid].cached_sps[2], streams[sid].cached_sps[3]);
+            }
             pthread_mutex_unlock(&streams[sid].lock);
 
-            const char *stream_label = (sid == 1) ? "CleanCam H265 Sub (D1)" : "CleanCam H265 Main (1080P)";
+            char sdp[1024];
+            int sdp_len = 0;
             int as_bw = (sid == 1) ? 1024 : 4096;
 
-            char sdp[1024];
-            int sdp_len = snprintf(sdp, sizeof(sdp),
+            if (codec == CODEC_H264) {
+                const char *stream_label = (sid == 1) ? "CleanCam H264 Sub (D1)" : "CleanCam H264 Main (1080P)";
+                sdp_len = snprintf(sdp, sizeof(sdp),
+                                   "v=0\r\n"
+                                   "o=- 0 0 IN IP4 0.0.0.0\r\n"
+                                   "s=%s\r\n"
+                                   "t=0 0\r\n"
+                                   "m=video 0 RTP/AVP 96\r\n"
+                                   "c=IN IP4 0.0.0.0\r\n"
+                                   "b=AS:%d\r\n"
+                                   "a=rtpmap:96 H264/90000\r\n"
+                                   "a=fmtp:96 packetization-mode=1;profile-level-id=%s;sprop-parameter-sets=%s,%s\r\n"
+                                   "a=control:track0\r\n",
+                                   stream_label, as_bw, profile_lvl, sps_b64, pps_b64);
+            } else {
+                const char *stream_label = (sid == 1) ? "CleanCam H265 Sub (D1)" : "CleanCam H265 Main (1080P)";
+                sdp_len = snprintf(sdp, sizeof(sdp),
                                    "v=0\r\n"
                                    "o=- 0 0 IN IP4 0.0.0.0\r\n"
                                    "s=%s\r\n"
@@ -693,6 +852,7 @@ static void *rtsp_client_thread(void *arg) {
                                    "a=fmtp:96 sprop-vps=%s;sprop-sps=%s;sprop-pps=%s\r\n"
                                    "a=control:track0\r\n",
                                    stream_label, as_bw, vps_b64, sps_b64, pps_b64);
+            }
 
             snprintf(resp, sizeof(resp),
                      "RTSP/1.0 200 OK\r\n"
@@ -1789,30 +1949,32 @@ int main(int argc, char **argv) {
     // Initialize Stream 0 (Main)
     streams[0].stream_id = 0;
     streams[0].name = "Main";
+    streams[0].codec = CODEC_H264;
     streams[0].rtp_seq = 1000;
     streams[0].rtp_timestamp = 10000;
     streams[0].rtp_ssrc = 0x12345678;
     pthread_mutex_init(&streams[0].lock, NULL);
+    memcpy(streams[0].cached_sps, default_main_h264_sps, sizeof(default_main_h264_sps));
+    streams[0].cached_sps_len = sizeof(default_main_h264_sps);
+    memcpy(streams[0].cached_pps, default_main_h264_pps, sizeof(default_main_h264_pps));
+    streams[0].cached_pps_len = sizeof(default_main_h264_pps);
     memcpy(streams[0].cached_vps, default_main_vps, sizeof(default_main_vps));
     streams[0].cached_vps_len = sizeof(default_main_vps);
-    memcpy(streams[0].cached_sps, default_main_sps, sizeof(default_main_sps));
-    streams[0].cached_sps_len = sizeof(default_main_sps);
-    memcpy(streams[0].cached_pps, default_main_pps, sizeof(default_main_pps));
-    streams[0].cached_pps_len = sizeof(default_main_pps);
 
     // Initialize Stream 1 (Sub)
     streams[1].stream_id = 1;
     streams[1].name = "Extra1";
+    streams[1].codec = CODEC_H264;
     streams[1].rtp_seq = 5000;
     streams[1].rtp_timestamp = 20000;
     streams[1].rtp_ssrc = 0x87654321;
     pthread_mutex_init(&streams[1].lock, NULL);
+    memcpy(streams[1].cached_sps, default_sub_h264_sps, sizeof(default_sub_h264_sps));
+    streams[1].cached_sps_len = sizeof(default_sub_h264_sps);
+    memcpy(streams[1].cached_pps, default_sub_h264_pps, sizeof(default_sub_h264_pps));
+    streams[1].cached_pps_len = sizeof(default_sub_h264_pps);
     memcpy(streams[1].cached_vps, default_sub_vps, sizeof(default_sub_vps));
     streams[1].cached_vps_len = sizeof(default_sub_vps);
-    memcpy(streams[1].cached_sps, default_sub_sps, sizeof(default_sub_sps));
-    streams[1].cached_sps_len = sizeof(default_sub_sps);
-    memcpy(streams[1].cached_pps, default_sub_pps, sizeof(default_sub_pps));
-    streams[1].cached_pps_len = sizeof(default_sub_pps);
 
     // Detect actual IP if passed or from hostname
     if (argc > 1) {
