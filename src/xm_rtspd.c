@@ -148,6 +148,9 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
     if (sid < 0 || sid >= NUM_STREAMS) sid = 0;
     uint8_t nal_type = (nal[0] >> 1) & 0x3F;
 
+    uint8_t orig_tid = nal[1] & 0x07;
+    if (orig_tid == 0) orig_tid = 1; // RFC 7798: nuh_temporal_id_plus1 must be >= 1
+
     if (len <= MAX_PAYLOAD) {
         uint8_t pkt[12 + MAX_PAYLOAD];
         pthread_mutex_lock(&streams[sid].lock);
@@ -170,16 +173,17 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
         pkt[9] = (ssrc >> 16) & 0xFF;
         pkt[10] = (ssrc >> 8) & 0xFF;
         pkt[11] = ssrc & 0xFF;
+
         memcpy(pkt + 12, nal, len);
+        // Force RFC 7798 compliance: F=0, Type=nal_type, LayerId=0, TID>=1
+        pkt[12] = (nal_type << 1);
+        pkt[13] = orig_tid;
+
         send_rtp_packet_to_client(c, pkt, 12 + len);
     } else {
-        uint8_t orig_byte0 = nal[0];
-        uint8_t orig_byte1 = nal[1];
-        uint8_t orig_tid = orig_byte1 & 0x07;
-        if (orig_tid == 0) orig_tid = 1; // RFC 7798: nuh_temporal_id_plus1 must be >= 1
         uint8_t fu_ind[2];
-        fu_ind[0] = (orig_byte0 & 0x81) | (49 << 1);
-        fu_ind[1] = (orig_byte1 & 0xF8) | orig_tid;
+        fu_ind[0] = (49 << 1); // F=0, Type=49 (FU), LayerId_high=0
+        fu_ind[1] = orig_tid;  // LayerId_low=0, TID=orig_tid (>=1)
 
         const uint8_t *payload = nal + 2;
         size_t payload_len = len - 2;
@@ -220,6 +224,7 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
             pkt[14] = fu_hdr;
             memcpy(pkt + 15, payload + offset, chunk_len);
             send_rtp_packet_to_client(c, pkt, 15 + chunk_len);
+            if (!c->rtp_interleaved) usleep(150);
             offset += chunk_len;
         }
     }
@@ -233,6 +238,8 @@ static void broadcast_nal(int sid, const uint8_t *nal, size_t len) {
         pthread_mutex_lock(&streams[sid].lock);
         if (len <= sizeof(streams[sid].cached_vps)) {
             memcpy(streams[sid].cached_vps, nal, len);
+            streams[sid].cached_vps[0] = (32 << 1);
+            streams[sid].cached_vps[1] = 1;
             streams[sid].cached_vps_len = len;
         }
         pthread_mutex_unlock(&streams[sid].lock);
@@ -240,6 +247,8 @@ static void broadcast_nal(int sid, const uint8_t *nal, size_t len) {
         pthread_mutex_lock(&streams[sid].lock);
         if (len <= sizeof(streams[sid].cached_sps)) {
             memcpy(streams[sid].cached_sps, nal, len);
+            streams[sid].cached_sps[0] = (33 << 1);
+            streams[sid].cached_sps[1] = 1;
             streams[sid].cached_sps_len = len;
         }
         pthread_mutex_unlock(&streams[sid].lock);
@@ -247,6 +256,8 @@ static void broadcast_nal(int sid, const uint8_t *nal, size_t len) {
         pthread_mutex_lock(&streams[sid].lock);
         if (len <= sizeof(streams[sid].cached_pps)) {
             memcpy(streams[sid].cached_pps, nal, len);
+            streams[sid].cached_pps[0] = (34 << 1);
+            streams[sid].cached_pps[1] = 1;
             streams[sid].cached_pps_len = len;
         }
         pthread_mutex_unlock(&streams[sid].lock);
@@ -718,6 +729,8 @@ static void *rtsp_client_thread(void *arg) {
 
                 if (clients[client_idx].udp_rtp_fd <= 0) {
                     clients[client_idx].udp_rtp_fd = socket(AF_INET, SOCK_DGRAM, 0);
+                    int sndbuf = 256 * 1024;
+                    setsockopt(clients[client_idx].udp_rtp_fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
                     int srv_port = 6970 + client_idx * 2;
                     struct sockaddr_in srv_udp;
                     memset(&srv_udp, 0, sizeof(srv_udp));
