@@ -178,11 +178,14 @@ EOF
     fi
 }
 
-# 2. Check if clean v3 flash is required
+# 2. Check if clean firmware flash is required
+# Marker is stored in /mnt/mtd/.cleancam_done (on the CAMERA internal flash)
+# so the same SD card can be used to flash multiple cameras sequentially!
+[ ! -d /mnt/mtd/Config ] && mount /dev/mtdblock5 /mnt/mtd 2>/dev/null
 NEED_FLASH=0
-if [ ! -f "$SD_DIR/.clean_v3_done" ]; then
+if [ ! -f "/mnt/mtd/.cleancam_done" ] || [ -f "$SD_DIR/force_flash" ]; then
     NEED_FLASH=1
-    echo "[!] Partition update required (.clean_v3_done not found)." >> $LOG_FILE
+    echo "[!] Partition update required for this camera (/mnt/mtd/.cleancam_done not found)." >> $LOG_FILE
 fi
 
 if [ "$NEED_FLASH" = "1" ]; then
@@ -218,8 +221,9 @@ if [ "$NEED_FLASH" = "1" ]; then
     if [ "$FLASH_OK" = "1" ]; then
         provision_wifi "$SD_DIR"
         restore_default_accounts
-        touch "$SD_DIR/.clean_v3_done"
-        $BB sync
+        touch "/mnt/mtd/.cleancam_done"
+        rm -f "$SD_DIR/.clean_v3_done" "$SD_DIR/force_flash" 2>/dev/null
+        $BB sync 2>/dev/null || sync
         echo "[+] Flashing complete! Rebooting cleanly into new flash firmware..." >> $LOG_FILE
         sleep 1
         reboot -f
