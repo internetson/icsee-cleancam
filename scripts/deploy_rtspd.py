@@ -77,8 +77,13 @@ def deploy_to_camera(cam_ip):
     print(f"[+] Sent {len(rtspd_data)} bytes to {cam_ip}:9999 successfully!")
     time.sleep(0.5)
 
-    # 3. Make executable and launch xm_rtspd
-    cmd = b"chmod 755 /var/tmp/xm_rtspd && ls -la /var/tmp/xm_rtspd && /var/tmp/xm_rtspd >/var/tmp/rtspd.log 2>&1 &\n"
+    # 3. Make executable, persist to /mnt/custom, and launch under watchdog loop
+    cmd = (
+        b"chmod 755 /var/tmp/xm_rtspd && "
+        b"mount -o remount,rw /mnt/custom 2>/dev/null; "
+        b"cp -f /var/tmp/xm_rtspd /mnt/custom/xm_rtspd 2>/dev/null; sync; "
+        b"( while true; do /var/tmp/xm_rtspd >/var/tmp/rtspd.log 2>&1; sleep 2; done ) &\n"
+    )
     s_telnet.sendall(cmd)
     time.sleep(1.0)
 
@@ -93,7 +98,7 @@ def deploy_to_camera(cam_ip):
             break
     print(f"[+] Status:\n{out.decode('utf-8', errors='replace')}")
 
-    time.sleep(1.5)
+    time.sleep(2.0)
     s_telnet.sendall(b"ps | grep xm_rtspd; head -n 25 /var/tmp/rtspd.log\n")
     time.sleep(0.5)
     out2 = b""
@@ -108,6 +113,20 @@ def deploy_to_camera(cam_ip):
     print(f"[+] Log:\n{out2.decode('utf-8', errors='replace')}")
     s_telnet.close()
 
+    # 4. Verify RTSP port 554 is accepting connections
+    s_test = socket.socket()
+    s_test.settimeout(2.0)
+    try:
+        s_test.connect((cam_ip, 554))
+        print(f"[SUCCESS] Port 554 is OPEN on {cam_ip}!")
+        s_test.close()
+    except Exception as e:
+        print(f"[-] Port 554 test failed on {cam_ip}: {e}")
+
 if __name__ == "__main__":
-    cam = sys.argv[1] if len(sys.argv) > 1 else "10.10.11.152"
-    deploy_to_camera(cam)
+    cams = sys.argv[1:] if len(sys.argv) > 1 else ["10.10.11.152", "10.10.11.153", "10.10.11.154"]
+    for cam in cams:
+        try:
+            deploy_to_camera(cam)
+        except Exception as e:
+            print(f"[-] Error deploying to {cam}: {e}")

@@ -14,6 +14,9 @@
 #include <signal.h>
 #include <sys/time.h>
 #include <sys/select.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
+#include <poll.h>
 #include <stdint.h>
 #include <math.h>
 
@@ -28,8 +31,10 @@
 
 typedef struct {
     int fd;
-    int active;
-    int is_playing;
+    volatile int in_use;        // slot is allocated to an active client thread
+    volatile int active;        // RTSP connection is active
+    volatile int is_playing;    // RTSP PLAY state
+    volatile int broken;        // network error / socket closed
     int rtp_interleaved;
     int stream_id; // 0 = Main (1080P), 1 = Sub (D1)
     uint32_t session_id;
@@ -118,6 +123,52 @@ static const uint8_t default_sub_pps[] = {
 static int dvrip_running = 1;
 static char my_ip[32] = "10.10.11.155";
 
+static void get_local_ip(char *out_ip, size_t max_len) {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock >= 0) {
+        // Method 1: Connect UDP socket to gateway / DNS to resolve primary outbound IP
+        const char *gateways[] = {"10.10.11.1", "192.168.1.1", "8.8.8.8", NULL};
+        for (int i = 0; gateways[i]; i++) {
+            struct sockaddr_in target;
+            memset(&target, 0, sizeof(target));
+            target.sin_family = AF_INET;
+            target.sin_addr.s_addr = inet_addr(gateways[i]);
+            target.sin_port = htons(80);
+            if (connect(sock, (struct sockaddr *)&target, sizeof(target)) == 0) {
+                struct sockaddr_in laddr;
+                socklen_t llen = sizeof(laddr);
+                if (getsockname(sock, (struct sockaddr *)&laddr, &llen) == 0) {
+                    char *str = inet_ntoa(laddr.sin_addr);
+                    if (str && strcmp(str, "0.0.0.0") != 0 && strncmp(str, "127.", 4) != 0) {
+                        strncpy(out_ip, str, max_len - 1);
+                        out_ip[max_len - 1] = '\0';
+                        close(sock);
+                        return;
+                    }
+                }
+            }
+        }
+        // Method 2: Interface scan (eth2, wlan0, ra0, eth0)
+        struct ifreq ifr;
+        const char *ifnames[] = {"eth2", "wlan0", "ra0", "eth0", NULL};
+        for (int i = 0; ifnames[i]; i++) {
+            memset(&ifr, 0, sizeof(ifr));
+            strncpy(ifr.ifr_name, ifnames[i], IFNAMSIZ - 1);
+            if (ioctl(sock, SIOCGIFADDR, &ifr) == 0) {
+                struct sockaddr_in *sin = (struct sockaddr_in *)&ifr.ifr_addr;
+                char *ip_str = inet_ntoa(sin->sin_addr);
+                if (ip_str && strcmp(ip_str, "0.0.0.0") != 0 && strncmp(ip_str, "127.", 4) != 0 && strcmp(ip_str, "192.168.1.10") != 0) {
+                    strncpy(out_ip, ip_str, max_len - 1);
+                    out_ip[max_len - 1] = '\0';
+                    close(sock);
+                    return;
+                }
+            }
+        }
+        close(sock);
+    }
+}
+
 static void base64_encode(const uint8_t *data, size_t len, char *out) {
     static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     size_t i = 0, j = 0;
@@ -135,8 +186,14 @@ static void base64_encode(const uint8_t *data, size_t len, char *out) {
 }
 
 static void send_rtp_packet_to_client(client_t *c, const uint8_t *rtp_pkt, size_t pkt_len) {
-    if (!c->active || !c->is_playing) return;
-    pthread_mutex_lock(&c->send_lock);
+    if (!c->in_use || !c->active || !c->is_playing || c->broken) return;
+    if (pthread_mutex_trylock(&c->send_lock) != 0) {
+        return; // Don't block video streaming thread if this client's send buffer/mutex is busy!
+    }
+    if (!c->in_use || !c->active || !c->is_playing || c->broken) {
+        pthread_mutex_unlock(&c->send_lock);
+        return;
+    }
     if (c->rtp_interleaved) {
         uint8_t hdr[4];
         hdr[0] = '$';
@@ -152,7 +209,7 @@ static void send_rtp_packet_to_client(client_t *c, const uint8_t *rtp_pkt, size_
         msg.msg_iov = iov;
         msg.msg_iovlen = 2;
         if (sendmsg(c->fd, &msg, MSG_NOSIGNAL) < 0) {
-            c->active = 0;
+            c->broken = 1;
             c->is_playing = 0;
         }
     } else if (c->client_rtp_port > 0 && c->udp_rtp_fd > 0) {
@@ -167,7 +224,7 @@ static void send_rtp_packet_to_client(client_t *c, const uint8_t *rtp_pkt, size_
 }
 
 static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
-    if (!c->active || !c->is_playing || len < 2) return;
+    if (!c->in_use || !c->active || !c->is_playing || c->broken || len < 2) return;
     int sid = c->stream_id;
     if (sid < 0 || sid >= NUM_STREAMS) sid = 0;
 
@@ -176,10 +233,11 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
     codec = streams[sid].codec;
     pthread_mutex_unlock(&streams[sid].lock);
 
+    uint8_t pkt_buf[12 + 4 + MAX_PAYLOAD];
+
     if (codec == CODEC_H264) {
         uint8_t nal_type = nal[0] & 0x1F;
         if (len <= MAX_PAYLOAD) {
-            uint8_t pkt[12 + MAX_PAYLOAD];
             pthread_mutex_lock(&streams[sid].lock);
             streams[sid].rtp_seq++;
             uint16_t seq = streams[sid].rtp_seq;
@@ -188,28 +246,28 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
             pthread_mutex_unlock(&streams[sid].lock);
 
             int marker = (nal_type == 1 || nal_type == 5) ? 1 : 0;
-            pkt[0] = 0x80;
-            pkt[1] = (marker << 7) | 96;
-            pkt[2] = (seq >> 8) & 0xFF;
-            pkt[3] = seq & 0xFF;
-            pkt[4] = (ts >> 24) & 0xFF;
-            pkt[5] = (ts >> 16) & 0xFF;
-            pkt[6] = (ts >> 8) & 0xFF;
-            pkt[7] = ts & 0xFF;
-            pkt[8] = (ssrc >> 24) & 0xFF;
-            pkt[9] = (ssrc >> 16) & 0xFF;
-            pkt[10] = (ssrc >> 8) & 0xFF;
-            pkt[11] = ssrc & 0xFF;
+            pkt_buf[0] = 0x80;
+            pkt_buf[1] = (marker << 7) | 96;
+            pkt_buf[2] = (seq >> 8) & 0xFF;
+            pkt_buf[3] = seq & 0xFF;
+            pkt_buf[4] = (ts >> 24) & 0xFF;
+            pkt_buf[5] = (ts >> 16) & 0xFF;
+            pkt_buf[6] = (ts >> 8) & 0xFF;
+            pkt_buf[7] = ts & 0xFF;
+            pkt_buf[8] = (ssrc >> 24) & 0xFF;
+            pkt_buf[9] = (ssrc >> 16) & 0xFF;
+            pkt_buf[10] = (ssrc >> 8) & 0xFF;
+            pkt_buf[11] = ssrc & 0xFF;
 
-            memcpy(pkt + 12, nal, len);
-            send_rtp_packet_to_client(c, pkt, 12 + len);
+            memcpy(pkt_buf + 12, nal, len);
+            send_rtp_packet_to_client(c, pkt_buf, 12 + len);
         } else {
             uint8_t fu_ind = (nal[0] & 0xE0) | 28; // FU-A indicator
             const uint8_t *payload = nal + 1;
             size_t payload_len = len - 1;
             size_t offset = 0;
 
-            while (offset < payload_len) {
+            while (offset < payload_len && !c->broken) {
                 size_t chunk_len = payload_len - offset;
                 if (chunk_len > MAX_PAYLOAD) chunk_len = MAX_PAYLOAD;
 
@@ -218,7 +276,6 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
                 uint8_t fu_hdr = (is_start << 7) | (is_end << 6) | nal_type;
                 int marker = (is_end && (nal_type == 1 || nal_type == 5)) ? 1 : 0;
 
-                uint8_t pkt[12 + 2 + MAX_PAYLOAD];
                 pthread_mutex_lock(&streams[sid].lock);
                 streams[sid].rtp_seq++;
                 uint16_t seq = streams[sid].rtp_seq;
@@ -226,24 +283,24 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
                 uint32_t ssrc = streams[sid].rtp_ssrc;
                 pthread_mutex_unlock(&streams[sid].lock);
 
-                pkt[0] = 0x80;
-                pkt[1] = (marker << 7) | 96;
-                pkt[2] = (seq >> 8) & 0xFF;
-                pkt[3] = seq & 0xFF;
-                pkt[4] = (ts >> 24) & 0xFF;
-                pkt[5] = (ts >> 16) & 0xFF;
-                pkt[6] = (ts >> 8) & 0xFF;
-                pkt[7] = ts & 0xFF;
-                pkt[8] = (ssrc >> 24) & 0xFF;
-                pkt[9] = (ssrc >> 16) & 0xFF;
-                pkt[10] = (ssrc >> 8) & 0xFF;
-                pkt[11] = ssrc & 0xFF;
+                pkt_buf[0] = 0x80;
+                pkt_buf[1] = (marker << 7) | 96;
+                pkt_buf[2] = (seq >> 8) & 0xFF;
+                pkt_buf[3] = seq & 0xFF;
+                pkt_buf[4] = (ts >> 24) & 0xFF;
+                pkt_buf[5] = (ts >> 16) & 0xFF;
+                pkt_buf[6] = (ts >> 8) & 0xFF;
+                pkt_buf[7] = ts & 0xFF;
+                pkt_buf[8] = (ssrc >> 24) & 0xFF;
+                pkt_buf[9] = (ssrc >> 16) & 0xFF;
+                pkt_buf[10] = (ssrc >> 8) & 0xFF;
+                pkt_buf[11] = ssrc & 0xFF;
 
-                pkt[12] = fu_ind;
-                pkt[13] = fu_hdr;
-                memcpy(pkt + 14, payload + offset, chunk_len);
-                send_rtp_packet_to_client(c, pkt, 14 + chunk_len);
-                if (!c->rtp_interleaved) usleep(150);
+                pkt_buf[12] = fu_ind;
+                pkt_buf[13] = fu_hdr;
+                memcpy(pkt_buf + 14, payload + offset, chunk_len);
+                send_rtp_packet_to_client(c, pkt_buf, 14 + chunk_len);
+                if (!c->rtp_interleaved) usleep(100);
                 offset += chunk_len;
             }
         }
@@ -253,7 +310,6 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
         if (orig_tid == 0) orig_tid = 1; // RFC 7798: TID must be >= 1
 
         if (len <= MAX_PAYLOAD) {
-            uint8_t pkt[12 + MAX_PAYLOAD];
             pthread_mutex_lock(&streams[sid].lock);
             streams[sid].rtp_seq++;
             uint16_t seq = streams[sid].rtp_seq;
@@ -262,24 +318,24 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
             pthread_mutex_unlock(&streams[sid].lock);
 
             int marker = (nal_type == 1 || nal_type == 19 || nal_type == 20) ? 1 : 0;
-            pkt[0] = 0x80;
-            pkt[1] = (marker << 7) | 96;
-            pkt[2] = (seq >> 8) & 0xFF;
-            pkt[3] = seq & 0xFF;
-            pkt[4] = (ts >> 24) & 0xFF;
-            pkt[5] = (ts >> 16) & 0xFF;
-            pkt[6] = (ts >> 8) & 0xFF;
-            pkt[7] = ts & 0xFF;
-            pkt[8] = (ssrc >> 24) & 0xFF;
-            pkt[9] = (ssrc >> 16) & 0xFF;
-            pkt[10] = (ssrc >> 8) & 0xFF;
-            pkt[11] = ssrc & 0xFF;
+            pkt_buf[0] = 0x80;
+            pkt_buf[1] = (marker << 7) | 96;
+            pkt_buf[2] = (seq >> 8) & 0xFF;
+            pkt_buf[3] = seq & 0xFF;
+            pkt_buf[4] = (ts >> 24) & 0xFF;
+            pkt_buf[5] = (ts >> 16) & 0xFF;
+            pkt_buf[6] = (ts >> 8) & 0xFF;
+            pkt_buf[7] = ts & 0xFF;
+            pkt_buf[8] = (ssrc >> 24) & 0xFF;
+            pkt_buf[9] = (ssrc >> 16) & 0xFF;
+            pkt_buf[10] = (ssrc >> 8) & 0xFF;
+            pkt_buf[11] = ssrc & 0xFF;
 
-            memcpy(pkt + 12, nal, len);
-            pkt[12] = (nal_type << 1);
-            pkt[13] = orig_tid;
+            memcpy(pkt_buf + 12, nal, len);
+            pkt_buf[12] = (nal_type << 1);
+            pkt_buf[13] = orig_tid;
 
-            send_rtp_packet_to_client(c, pkt, 12 + len);
+            send_rtp_packet_to_client(c, pkt_buf, 12 + len);
         } else {
             uint8_t fu_ind[2];
             fu_ind[0] = (49 << 1); // F=0, Type=49 (FU), LayerId_high=0
@@ -289,7 +345,7 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
             size_t payload_len = len - 2;
             size_t offset = 0;
 
-            while (offset < payload_len) {
+            while (offset < payload_len && !c->broken) {
                 size_t chunk_len = payload_len - offset;
                 if (chunk_len > MAX_PAYLOAD) chunk_len = MAX_PAYLOAD;
 
@@ -298,7 +354,6 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
                 uint8_t fu_hdr = (is_start << 7) | (is_end << 6) | nal_type;
                 int marker = (is_end && (nal_type == 1 || nal_type == 19 || nal_type == 20)) ? 1 : 0;
 
-                uint8_t pkt[12 + 3 + MAX_PAYLOAD];
                 pthread_mutex_lock(&streams[sid].lock);
                 streams[sid].rtp_seq++;
                 uint16_t seq = streams[sid].rtp_seq;
@@ -306,25 +361,25 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
                 uint32_t ssrc = streams[sid].rtp_ssrc;
                 pthread_mutex_unlock(&streams[sid].lock);
 
-                pkt[0] = 0x80;
-                pkt[1] = (marker << 7) | 96;
-                pkt[2] = (seq >> 8) & 0xFF;
-                pkt[3] = seq & 0xFF;
-                pkt[4] = (ts >> 24) & 0xFF;
-                pkt[5] = (ts >> 16) & 0xFF;
-                pkt[6] = (ts >> 8) & 0xFF;
-                pkt[7] = ts & 0xFF;
-                pkt[8] = (ssrc >> 24) & 0xFF;
-                pkt[9] = (ssrc >> 16) & 0xFF;
-                pkt[10] = (ssrc >> 8) & 0xFF;
-                pkt[11] = ssrc & 0xFF;
+                pkt_buf[0] = 0x80;
+                pkt_buf[1] = (marker << 7) | 96;
+                pkt_buf[2] = (seq >> 8) & 0xFF;
+                pkt_buf[3] = seq & 0xFF;
+                pkt_buf[4] = (ts >> 24) & 0xFF;
+                pkt_buf[5] = (ts >> 16) & 0xFF;
+                pkt_buf[6] = (ts >> 8) & 0xFF;
+                pkt_buf[7] = ts & 0xFF;
+                pkt_buf[8] = (ssrc >> 24) & 0xFF;
+                pkt_buf[9] = (ssrc >> 16) & 0xFF;
+                pkt_buf[10] = (ssrc >> 8) & 0xFF;
+                pkt_buf[11] = ssrc & 0xFF;
 
-                pkt[12] = fu_ind[0];
-                pkt[13] = fu_ind[1];
-                pkt[14] = fu_hdr;
-                memcpy(pkt + 15, payload + offset, chunk_len);
-                send_rtp_packet_to_client(c, pkt, 15 + chunk_len);
-                if (!c->rtp_interleaved) usleep(150);
+                pkt_buf[12] = fu_ind[0];
+                pkt_buf[13] = fu_ind[1];
+                pkt_buf[14] = fu_hdr;
+                memcpy(pkt_buf + 15, payload + offset, chunk_len);
+                send_rtp_packet_to_client(c, pkt_buf, 15 + chunk_len);
+                if (!c->rtp_interleaved) usleep(100);
                 offset += chunk_len;
             }
         }
@@ -387,13 +442,22 @@ static void broadcast_nal(int sid, const uint8_t *nal, size_t len) {
         pthread_mutex_unlock(&streams[sid].lock);
     }
 
+    // Take snapshot of active client slot indices under clients_lock
+    int active_slots[MAX_CLIENTS];
+    int n_active = 0;
+
     pthread_mutex_lock(&clients_lock);
     for (int i = 0; i < MAX_CLIENTS; i++) {
-        if (clients[i].active && clients[i].is_playing && clients[i].stream_id == sid) {
-            send_nal_to_client(&clients[i], nal, len);
+        if (clients[i].in_use && clients[i].active && clients[i].is_playing && clients[i].stream_id == sid && !clients[i].broken) {
+            active_slots[n_active++] = i;
         }
     }
     pthread_mutex_unlock(&clients_lock);
+
+    // Send packets OUTSIDE clients_lock
+    for (int i = 0; i < n_active; i++) {
+        send_nal_to_client(&clients[active_slots[i]], nal, len);
+    }
 }
 
 static void send_parameter_sets_to_client(client_t *c) {
@@ -498,6 +562,14 @@ static void *keepalive_thread(void *arg) {
             send(ka->s_cmd, ka_json, ka_len, MSG_NOSIGNAL) < 0) {
             break;
         }
+
+        // Drain keepalive reply so kernel receive buffer never fills up
+        while (1) {
+            struct pollfd pfd = { .fd = ka->s_cmd, .events = POLLIN };
+            if (poll(&pfd, 1, 100) <= 0 || !(pfd.revents & POLLIN)) break;
+            uint8_t drain_buf[512];
+            if (recv(ka->s_cmd, drain_buf, sizeof(drain_buf), MSG_DONTWAIT) <= 0) break;
+        }
     }
     return NULL;
 }
@@ -510,6 +582,10 @@ static void *dvrip_stream_thread(void *arg) {
     while (dvrip_running) {
         int s_cmd = socket(AF_INET, SOCK_STREAM, 0);
         if (s_cmd < 0) { sleep(2); continue; }
+
+        struct timeval tv_cmd = { .tv_sec = 6, .tv_usec = 0 };
+        setsockopt(s_cmd, SOL_SOCKET, SO_RCVTIMEO, &tv_cmd, sizeof(tv_cmd));
+        setsockopt(s_cmd, SOL_SOCKET, SO_SNDTIMEO, &tv_cmd, sizeof(tv_cmd));
 
         struct sockaddr_in sin;
         memset(&sin, 0, sizeof(sin));
@@ -561,6 +637,10 @@ static void *dvrip_stream_thread(void *arg) {
         printf("[DVRIP-%s] Logged in! Session: 0x%08X\n", stype, session_id);
 
         int s_data = socket(AF_INET, SOCK_STREAM, 0);
+        struct timeval tv_data = { .tv_sec = 10, .tv_usec = 0 };
+        setsockopt(s_data, SOL_SOCKET, SO_RCVTIMEO, &tv_data, sizeof(tv_data));
+        setsockopt(s_data, SOL_SOCKET, SO_SNDTIMEO, &tv_data, sizeof(tv_data));
+
         if (connect(s_data, (struct sockaddr *)&sin, sizeof(sin)) < 0) {
             close(s_cmd); close(s_data); sleep(2); continue;
         }
@@ -703,53 +783,18 @@ static void *dvrip_stream_thread(void *arg) {
     return NULL;
 }
 
-typedef struct {
-    int fd;
-    struct sockaddr_in addr;
-} client_arg_t;
-
 static void *rtsp_client_thread(void *arg) {
-    client_arg_t *carg = (client_arg_t *)arg;
-    int cfd = carg->fd;
-    struct sockaddr_in caddr = carg->addr;
-    free(carg);
+    int client_idx = (int)(intptr_t)arg;
+    client_t *c = &clients[client_idx];
+    int cfd = c->fd;
+    char client_ip[32];
+    strncpy(client_ip, c->client_ip, sizeof(client_ip));
+    printf("[RTSP] Client connected: %s (slot %d)\n", client_ip, client_idx);
 
     char req[4096];
     char resp[4096];
-    char client_ip[32];
-    strncpy(client_ip, inet_ntoa(caddr.sin_addr), sizeof(client_ip));
-    printf("[RTSP] Client connected: %s\n", client_ip);
 
-    int client_idx = -1;
-    pthread_mutex_lock(&clients_lock);
-    for (int i = 0; i < MAX_CLIENTS; i++) {
-        if (!clients[i].active) {
-            client_idx = i;
-            memset(&clients[i], 0, sizeof(client_t));
-            pthread_mutex_init(&clients[i].send_lock, NULL);
-            clients[i].fd = cfd;
-            clients[i].active = 1;
-            clients[i].stream_id = 0; // Default to Main
-            clients[i].session_id = 0x55AA1234 + i;
-            strncpy(clients[i].client_ip, client_ip, sizeof(clients[i].client_ip));
-            clients[i].addr = caddr;
-            break;
-        }
-    }
-    pthread_mutex_unlock(&clients_lock);
-
-    if (client_idx < 0) {
-        printf("[RTSP] Too many clients, closing.\n");
-        close(cfd);
-        return NULL;
-    }
-
-    struct timeval tv = { .tv_sec = 2, .tv_usec = 0 };
-    setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    int nodelay = 1;
-    setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
-
-    while (clients[client_idx].active) {
+    while (c->active && !c->broken) {
         memset(req, 0, sizeof(req));
         size_t total = 0;
         while (total < sizeof(req) - 1) {
@@ -785,12 +830,12 @@ static void *rtsp_client_thread(void *arg) {
         // /live/ch1, /stream1, /sub, /track1, /extra1 -> Stream 1 (Sub)
         // Otherwise -> Stream 0 (Main)
         if (strstr(uri, "ch1") || strstr(uri, "stream1") || strstr(uri, "sub") || strstr(uri, "track1") || strstr(uri, "extra1") || strstr(uri, "substream")) {
-            clients[client_idx].stream_id = 1;
+            c->stream_id = 1;
         } else if (strstr(uri, "ch0") || strstr(uri, "stream0") || strstr(uri, "main") || strstr(uri, "track0")) {
-            clients[client_idx].stream_id = 0;
+            c->stream_id = 0;
         }
 
-        int sid = clients[client_idx].stream_id;
+        int sid = c->stream_id;
         printf("[RTSP] %s %s (CSeq: %d, Stream: %d)\n", method, uri, cseq, sid);
 
         if (strcmp(method, "OPTIONS") == 0) {
@@ -799,9 +844,9 @@ static void *rtsp_client_thread(void *arg) {
                      "CSeq: %d\r\n"
                      "Public: OPTIONS, DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE\r\n\r\n",
                      cseq);
-            pthread_mutex_lock(&clients[client_idx].send_lock);
-            send(cfd, resp, strlen(resp), 0);
-            pthread_mutex_unlock(&clients[client_idx].send_lock);
+            pthread_mutex_lock(&c->send_lock);
+            if (send(cfd, resp, strlen(resp), MSG_NOSIGNAL) < 0) c->broken = 1;
+            pthread_mutex_unlock(&c->send_lock);
         } else if (strcmp(method, "DESCRIBE") == 0) {
             char vps_b64[256] = {0}, sps_b64[256] = {0}, pps_b64[256] = {0};
             video_codec_t codec;
@@ -862,46 +907,46 @@ static void *rtsp_client_thread(void *arg) {
                      "Content-Length: %d\r\n\r\n"
                      "%s",
                      cseq, uri, sdp_len, sdp);
-            pthread_mutex_lock(&clients[client_idx].send_lock);
-            send(cfd, resp, strlen(resp), 0);
-            pthread_mutex_unlock(&clients[client_idx].send_lock);
+            pthread_mutex_lock(&c->send_lock);
+            if (send(cfd, resp, strlen(resp), MSG_NOSIGNAL) < 0) c->broken = 1;
+            pthread_mutex_unlock(&c->send_lock);
         } else if (strcmp(method, "SETUP") == 0) {
             char *trans_hdr = strcasestr(req, "Transport:");
             int is_tcp = (trans_hdr && (strcasestr(trans_hdr, "TCP") || strcasestr(trans_hdr, "interleaved")));
             char *cp = trans_hdr ? strcasestr(trans_hdr, "client_port=") : NULL;
 
             if (is_tcp || !cp) {
-                clients[client_idx].rtp_interleaved = 1;
+                c->rtp_interleaved = 1;
                 snprintf(resp, sizeof(resp),
                          "RTSP/1.0 200 OK\r\n"
                          "CSeq: %d\r\n"
                          "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n"
                          "Session: %08X\r\n\r\n",
-                         cseq, clients[client_idx].session_id);
+                         cseq, c->session_id);
             } else {
                 int rtp_p = 0, rtcp_p = 0;
                 sscanf(cp + 12, "%d-%d", &rtp_p, &rtcp_p);
                 if (rtcp_p == 0) rtcp_p = rtp_p + 1;
 
-                clients[client_idx].rtp_interleaved = 0;
-                clients[client_idx].client_rtp_port = rtp_p;
-                clients[client_idx].client_rtcp_port = rtcp_p;
+                c->rtp_interleaved = 0;
+                c->client_rtp_port = rtp_p;
+                c->client_rtcp_port = rtcp_p;
 
-                if (clients[client_idx].udp_rtp_fd <= 0) {
-                    clients[client_idx].udp_rtp_fd = socket(AF_INET, SOCK_DGRAM, 0);
+                if (c->udp_rtp_fd <= 0) {
+                    c->udp_rtp_fd = socket(AF_INET, SOCK_DGRAM, 0);
                     int sndbuf = 256 * 1024;
-                    setsockopt(clients[client_idx].udp_rtp_fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+                    setsockopt(c->udp_rtp_fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
                     int srv_port = 6970 + client_idx * 2;
                     struct sockaddr_in srv_udp;
                     memset(&srv_udp, 0, sizeof(srv_udp));
                     srv_udp.sin_family = AF_INET;
                     srv_udp.sin_port = htons(srv_port);
                     srv_udp.sin_addr.s_addr = INADDR_ANY;
-                    if (bind(clients[client_idx].udp_rtp_fd, (struct sockaddr *)&srv_udp, sizeof(srv_udp)) < 0) {
+                    if (bind(c->udp_rtp_fd, (struct sockaddr *)&srv_udp, sizeof(srv_udp)) < 0) {
                         srv_udp.sin_port = 0;
-                        bind(clients[client_idx].udp_rtp_fd, (struct sockaddr *)&srv_udp, sizeof(srv_udp));
+                        bind(c->udp_rtp_fd, (struct sockaddr *)&srv_udp, sizeof(srv_udp));
                         socklen_t slen = sizeof(srv_udp);
-                        getsockname(clients[client_idx].udp_rtp_fd, (struct sockaddr *)&srv_udp, &slen);
+                        getsockname(c->udp_rtp_fd, (struct sockaddr *)&srv_udp, &slen);
                         srv_port = ntohs(srv_udp.sin_port);
                     }
                     snprintf(resp, sizeof(resp),
@@ -909,19 +954,19 @@ static void *rtsp_client_thread(void *arg) {
                              "CSeq: %d\r\n"
                              "Transport: RTP/AVP;unicast;client_port=%d-%d;server_port=%d-%d\r\n"
                              "Session: %08X\r\n\r\n",
-                             cseq, rtp_p, rtcp_p, srv_port, srv_port + 1, clients[client_idx].session_id);
+                             cseq, rtp_p, rtcp_p, srv_port, srv_port + 1, c->session_id);
                 } else {
                     snprintf(resp, sizeof(resp),
                              "RTSP/1.0 200 OK\r\n"
                              "CSeq: %d\r\n"
                              "Transport: RTP/AVP;unicast;client_port=%d-%d;server_port=6970-6971\r\n"
                              "Session: %08X\r\n\r\n",
-                             cseq, rtp_p, rtcp_p, clients[client_idx].session_id);
+                             cseq, rtp_p, rtcp_p, c->session_id);
                 }
             }
-            pthread_mutex_lock(&clients[client_idx].send_lock);
-            send(cfd, resp, strlen(resp), 0);
-            pthread_mutex_unlock(&clients[client_idx].send_lock);
+            pthread_mutex_lock(&c->send_lock);
+            if (send(cfd, resp, strlen(resp), MSG_NOSIGNAL) < 0) c->broken = 1;
+            pthread_mutex_unlock(&c->send_lock);
         } else if (strcmp(method, "PLAY") == 0) {
             pthread_mutex_lock(&streams[sid].lock);
             uint16_t cur_seq = streams[sid].rtp_seq;
@@ -933,46 +978,54 @@ static void *rtsp_client_thread(void *arg) {
                      "CSeq: %d\r\n"
                      "Session: %08X\r\n"
                      "RTP-Info: url=%s/track0;seq=%u;rtptime=%u\r\n\r\n",
-                     cseq, clients[client_idx].session_id, uri, cur_seq, cur_ts);
-            pthread_mutex_lock(&clients[client_idx].send_lock);
-            send(cfd, resp, strlen(resp), 0);
-            pthread_mutex_unlock(&clients[client_idx].send_lock);
+                     cseq, c->session_id, uri, cur_seq, cur_ts);
+            pthread_mutex_lock(&c->send_lock);
+            if (send(cfd, resp, strlen(resp), MSG_NOSIGNAL) < 0) c->broken = 1;
+            pthread_mutex_unlock(&c->send_lock);
 
-            clients[client_idx].is_playing = 1;
+            c->is_playing = 1;
             printf("[RTSP] Client %s started PLAY on stream %d (%s)!\n", client_ip, sid, (sid == 1) ? "Sub" : "Main");
 
-            send_parameter_sets_to_client(&clients[client_idx]);
+            send_parameter_sets_to_client(c);
         } else if (strcmp(method, "TEARDOWN") == 0) {
             snprintf(resp, sizeof(resp),
                      "RTSP/1.0 200 OK\r\n"
                      "CSeq: %d\r\n"
                      "Session: %08X\r\n\r\n",
-                     cseq, clients[client_idx].session_id);
-            pthread_mutex_lock(&clients[client_idx].send_lock);
-            send(cfd, resp, strlen(resp), 0);
-            pthread_mutex_unlock(&clients[client_idx].send_lock);
+                     cseq, c->session_id);
+            pthread_mutex_lock(&c->send_lock);
+            send(cfd, resp, strlen(resp), MSG_NOSIGNAL);
+            pthread_mutex_unlock(&c->send_lock);
             break;
         } else {
             snprintf(resp, sizeof(resp),
                      "RTSP/1.0 200 OK\r\n"
                      "CSeq: %d\r\n\r\n",
                      cseq);
-            pthread_mutex_lock(&clients[client_idx].send_lock);
-            send(cfd, resp, strlen(resp), 0);
-            pthread_mutex_unlock(&clients[client_idx].send_lock);
+            pthread_mutex_lock(&c->send_lock);
+            if (send(cfd, resp, strlen(resp), MSG_NOSIGNAL) < 0) c->broken = 1;
+            pthread_mutex_unlock(&c->send_lock);
         }
     }
 
 client_done:
-    printf("[RTSP] Client disconnected: %s\n", client_ip);
-    pthread_mutex_lock(&clients_lock);
-    clients[client_idx].active = 0;
-    clients[client_idx].is_playing = 0;
-    if (clients[client_idx].udp_rtp_fd > 0) {
-        close(clients[client_idx].udp_rtp_fd);
-        clients[client_idx].udp_rtp_fd = 0;
+    printf("[RTSP] Client disconnected: %s (slot %d)\n", client_ip, client_idx);
+    pthread_mutex_lock(&c->send_lock);
+    c->active = 0;
+    c->is_playing = 0;
+    c->broken = 1;
+    if (c->udp_rtp_fd > 0) {
+        close(c->udp_rtp_fd);
+        c->udp_rtp_fd = 0;
     }
-    close(clients[client_idx].fd);
+    if (c->fd >= 0) {
+        close(c->fd);
+        c->fd = -1;
+    }
+    pthread_mutex_unlock(&c->send_lock);
+
+    pthread_mutex_lock(&clients_lock);
+    c->in_use = 0;
     pthread_mutex_unlock(&clients_lock);
     return NULL;
 }
@@ -1098,6 +1151,10 @@ static void *onvif_thread(void *arg) {
         socklen_t clen = sizeof(caddr);
         int cfd = accept(sfd, (struct sockaddr *)&caddr, &clen);
         if (cfd < 0) continue;
+
+        struct timeval tv_onvif = { .tv_sec = 2, .tv_usec = 0 };
+        setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv_onvif, sizeof(tv_onvif));
+        setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, &tv_onvif, sizeof(tv_onvif));
 
         char buf[8192];
         ssize_t total = 0;
@@ -1855,8 +1912,8 @@ static void *onvif_thread(void *arg) {
                  "Connection: close\r\n\r\n",
                  content_type,
                  strlen(resp_body));
-        send(cfd, resp_hdr, hlen, 0);
-        send(cfd, resp_body, strlen(resp_body), 0);
+        send(cfd, resp_hdr, hlen, MSG_NOSIGNAL);
+        send(cfd, resp_body, strlen(resp_body), MSG_NOSIGNAL);
         close(cfd);
     }
     return NULL;
@@ -1937,14 +1994,32 @@ static void *ws_discovery_thread(void *arg) {
     return NULL;
 }
 
+static void crash_handler(int sig) {
+    fprintf(stderr, "\n[CRASH] Caught fatal signal %d (%s)!\n", sig, strsignal(sig));
+    fflush(stderr);
+    _exit(128 + sig);
+}
+
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IOLBF, 0);
     setvbuf(stderr, NULL, _IOLBF, 0);
     signal(SIGPIPE, SIG_IGN);
+    signal(SIGSEGV, crash_handler);
+    signal(SIGBUS, crash_handler);
+    signal(SIGILL, crash_handler);
+    signal(SIGFPE, crash_handler);
+
     printf("=========================================\n");
     printf(" xm_rtspd - Native Dual-Stream RTSP/ONVIF\n");
     printf(" CleanCam GK7201V300 (Main 1080P & Sub D1)\n");
     printf("=========================================\n");
+
+    // Initialize all client slots and their mutexes ONCE
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        memset(&clients[i], 0, sizeof(client_t));
+        clients[i].fd = -1;
+        pthread_mutex_init(&clients[i].send_lock, NULL);
+    }
 
     // Initialize Stream 0 (Main)
     streams[0].stream_id = 0;
@@ -1976,10 +2051,13 @@ int main(int argc, char **argv) {
     memcpy(streams[1].cached_vps, default_sub_vps, sizeof(default_sub_vps));
     streams[1].cached_vps_len = sizeof(default_sub_vps);
 
-    // Detect actual IP if passed or from hostname
-    if (argc > 1) {
-        strncpy(my_ip, argv[1], sizeof(my_ip));
+    // Auto-detect local IP address dynamically
+    get_local_ip(my_ip, sizeof(my_ip));
+    if (argc > 1 && argv[1][0] != '\0') {
+        strncpy(my_ip, argv[1], sizeof(my_ip) - 1);
+        my_ip[sizeof(my_ip) - 1] = '\0';
     }
+    printf("[Init] Local IP: %s\n", my_ip);
 
     // Launch worker threads for both streams
     pthread_t th_main, th_sub;
@@ -2014,13 +2092,64 @@ int main(int argc, char **argv) {
         int cfd = accept(sfd, (struct sockaddr *)&caddr, &clen);
         if (cfd < 0) continue;
 
-        client_arg_t *carg = malloc(sizeof(client_arg_t));
-        carg->fd = cfd;
-        carg->addr = caddr;
+        struct timeval tv_snd = { .tv_sec = 2, .tv_usec = 0 };
+        setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, &tv_snd, sizeof(tv_snd));
+        struct timeval tv_rcv = { .tv_sec = 3, .tv_usec = 0 };
+        setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv_rcv, sizeof(tv_rcv));
+        int nodelay = 1;
+        setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+
+        int slot = -1;
+        pthread_mutex_lock(&clients_lock);
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (!clients[i].in_use) {
+                slot = i;
+                clients[i].in_use = 1;
+                clients[i].active = 1;
+                clients[i].is_playing = 0;
+                clients[i].broken = 0;
+                clients[i].fd = cfd;
+                clients[i].stream_id = 0;
+                clients[i].session_id = 0x55AA1234 + i;
+                clients[i].addr = caddr;
+                clients[i].client_rtp_port = 0;
+                clients[i].client_rtcp_port = 0;
+                clients[i].udp_rtp_fd = 0;
+                clients[i].rtp_interleaved = 0;
+                inet_ntop(AF_INET, &caddr.sin_addr, clients[i].client_ip, sizeof(clients[i].client_ip));
+                break;
+            }
+        }
+        pthread_mutex_unlock(&clients_lock);
+
+        if (slot < 0) {
+            printf("[RTSP] Max clients (%d) reached, rejecting.\n", MAX_CLIENTS);
+            close(cfd);
+            continue;
+        }
+
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setstacksize(&attr, 64 * 1024);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
         pthread_t tid;
-        pthread_create(&tid, NULL, rtsp_client_thread, carg);
-        pthread_detach(tid);
+        if (pthread_create(&tid, &attr, rtsp_client_thread, (void *)(intptr_t)slot) != 0) {
+            printf("[RTSP] Failed to spawn thread for client slot %d\n", slot);
+            pthread_mutex_lock(&clients[slot].send_lock);
+            clients[slot].active = 0;
+            clients[slot].is_playing = 0;
+            clients[slot].broken = 1;
+            clients[slot].fd = -1;
+            pthread_mutex_unlock(&clients[slot].send_lock);
+
+            pthread_mutex_lock(&clients_lock);
+            clients[slot].in_use = 0;
+            pthread_mutex_unlock(&clients_lock);
+
+            close(cfd);
+        }
+        pthread_attr_destroy(&attr);
     }
 
     return 0;

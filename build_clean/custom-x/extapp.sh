@@ -129,13 +129,18 @@ elif [ -x /mnt/custom/xm_httpd ]; then
     /mnt/custom/xm_httpd 8080 &
 fi
 
-# 8. Start Native RTSP & ONVIF Stream Server (Port 554 & Port 8899)
+# 8. Start Native RTSP & ONVIF Stream Server with Auto-Restart Watchdog (Port 554 & Port 8899)
 killall -9 xm_rtspd 2>/dev/null
-if [ -x /var/tmp/xm_rtspd ]; then
-    /var/tmp/xm_rtspd >/var/tmp/rtspd.log 2>&1 &
-elif [ -x /mnt/custom/xm_rtspd ]; then
-    /mnt/custom/xm_rtspd >/var/tmp/rtspd.log 2>&1 &
-fi
+(
+    while true; do
+        if [ -x /var/tmp/xm_rtspd ]; then
+            /var/tmp/xm_rtspd >/var/tmp/rtspd.log 2>&1
+        elif [ -x /mnt/custom/xm_rtspd ]; then
+            /mnt/custom/xm_rtspd >/var/tmp/rtspd.log 2>&1
+        fi
+        sleep 2
+    done
+) &
 
 # 9. Start Hardware Reset Button Monitor (GPIO 0, 10s hold = factory reset)
 killall -9 xm_resetd 2>/dev/null
