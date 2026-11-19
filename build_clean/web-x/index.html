@@ -888,7 +888,113 @@
                         </div>
                     </div>
 
-                    <button type="button" class="btn-apply" onclick="applyAllSettings()">Применить настройки OSD и Звука</button>
+                                        <button type="button" class="btn-apply" onclick="applyAllSettings()">Применить настройки OSD и Звука</button>
+
+                    <!-- Home Assistant OSD Card -->
+                    <div class="card" style="margin-top: 16px;">
+                        <div class="card-header">
+                            <div class="card-title">🏠 Home Assistant OSD (Телеметрия & Push)</div>
+                            <span class="badge" id="ha-osd-badge" style="background: #334155; color: #94a3b8; font-size: 0.72rem; padding: 3px 8px; border-radius: 6px;">Отключено</span>
+                        </div>
+
+                        <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 12px;">
+                            Прямое аппаратное наложение данных умного дома (погода, давление, температура, освещенность, статус охраны и замков) на видеопоток камеры в реальном времени.
+                        </p>
+
+                        <label class="checkbox-label" style="margin-bottom: 14px;">
+                            <input type="checkbox" id="set-ha-osd-enable" onchange="toggleHaOsdFields()">
+                            <strong style="color: #f8fafc;">Включить опрос Home Assistant и вывод данных в OSD</strong>
+                        </label>
+
+                        <div id="ha-osd-fields" style="display: none; flex-direction: column; gap: 12px;">
+                            <div class="grid">
+                                <div class="form-group">
+                                    <label class="form-label" for="set-ha-osd-url">Адрес сервера Home Assistant (URL):</label>
+                                    <input type="text" id="set-ha-osd-url" class="form-input" placeholder="http://10.10.11.11:8123" value="http://10.10.11.11:8123">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="set-ha-osd-token">Долгосрочный токен (Long-Lived Access Token):</label>
+                                    <input type="password" id="set-ha-osd-token" class="form-input" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...">
+                                </div>
+                            </div>
+
+                            <div class="grid">
+                                <div class="form-group">
+                                    <label class="form-label" for="set-ha-osd-interval">Интервал обновления (секунды):</label>
+                                    <input type="number" id="set-ha-osd-interval" class="form-input" min="3" max="3600" value="10">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="set-ha-osd-pos">Положение на экране:</label>
+                                    <select id="set-ha-osd-pos" class="form-select">
+                                        <option value="BottomLeft" selected>Внизу слева (Bottom-Left - рекомендуется)</option>
+                                        <option value="TopLeft">Вверху слева (Top-Left)</option>
+                                        <option value="TopRight">Вверху справа (Top-Right)</option>
+                                        <option value="BottomRight">Внизу справа (Bottom-Right)</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div style="margin-top: 6px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                    <label class="form-label" style="margin-bottom: 0;">Строки OSD (Jinja2 шаблоны Home Assistant, до 6 строк):</label>
+                                    <span style="font-size: 0.72rem; color: var(--accent);">Быстрая вставка пресетов:</span>
+                                </div>
+                                
+                                <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px;">
+                                    <button type="button" class="btn-scan" style="font-size: 0.72rem; padding: 3px 8px;" onclick="applyHaPreset('weather')">⛅ Погода + Давление</button>
+                                    <button type="button" class="btn-scan" style="font-size: 0.72rem; padding: 3px 8px;" onclick="applyHaPreset('climate')">🌡️ Датчики климата</button>
+                                    <button type="button" class="btn-scan" style="font-size: 0.72rem; padding: 3px 8px;" onclick="applyHaPreset('lighting')">💡 Статус освещения</button>
+                                    <button type="button" class="btn-scan" style="font-size: 0.72rem; padding: 3px 8px;" onclick="applyHaPreset('security')">🚪 Охрана & Двери</button>
+                                </div>
+
+                                <div style="display: flex; flex-direction: column; gap: 8px;">
+                                    <div style="display: flex; gap: 8px; align-items: center;">
+                                        <input type="checkbox" id="set-ha-osd-l1-en" checked title="Вкл/Выкл строку 1">
+                                        <span style="font-size: 0.78rem; width: 18px; color: var(--text-muted);">1:</span>
+                                        <input type="text" id="set-ha-osd-l1" class="form-input" style="flex: 1; font-family: monospace; font-size: 0.8rem;" placeholder="Строка 1 (например: 🌤️ {{ states('weather.forecast_home') }} {{ state_attr('weather.forecast_home', 'temperature') }}°C)">
+                                    </div>
+                                    <div style="display: flex; gap: 8px; align-items: center;">
+                                        <input type="checkbox" id="set-ha-osd-l2-en" checked title="Вкл/Выкл строку 2">
+                                        <span style="font-size: 0.78rem; width: 18px; color: var(--text-muted);">2:</span>
+                                        <input type="text" id="set-ha-osd-l2" class="form-input" style="flex: 1; font-family: monospace; font-size: 0.8rem;" placeholder="Строка 2 (например: Давление: {{ states('sensor.pressure') }} мм | {{ states('sensor.illuminance') }} лк)">
+                                    </div>
+                                    <div style="display: flex; gap: 8px; align-items: center;">
+                                        <input type="checkbox" id="set-ha-osd-l3-en" checked title="Вкл/Выкл строку 3">
+                                        <span style="font-size: 0.78rem; width: 18px; color: var(--text-muted);">3:</span>
+                                        <input type="text" id="set-ha-osd-l3" class="form-input" style="flex: 1; font-family: monospace; font-size: 0.8rem;" placeholder="Строка 3 (например: Двор: {{ states('light.yard') }} | Ворота: {{ states('cover.gate') }})">
+                                    </div>
+                                    <div style="display: flex; gap: 8px; align-items: center;">
+                                        <input type="checkbox" id="set-ha-osd-l4-en" title="Вкл/Выкл строку 4">
+                                        <span style="font-size: 0.78rem; width: 18px; color: var(--text-muted);">4:</span>
+                                        <input type="text" id="set-ha-osd-l4" class="form-input" style="flex: 1; font-family: monospace; font-size: 0.8rem;" placeholder="Строка 4 (опционально)">
+                                    </div>
+                                    <div style="display: flex; gap: 8px; align-items: center;">
+                                        <input type="checkbox" id="set-ha-osd-l5-en" title="Вкл/Выкл строку 5">
+                                        <span style="font-size: 0.78rem; width: 18px; color: var(--text-muted);">5:</span>
+                                        <input type="text" id="set-ha-osd-l5" class="form-input" style="flex: 1; font-family: monospace; font-size: 0.8rem;" placeholder="Строка 5 (опционально)">
+                                    </div>
+                                    <div style="display: flex; gap: 8px; align-items: center;">
+                                        <input type="checkbox" id="set-ha-osd-l6-en" title="Вкл/Выкл строку 6">
+                                        <span style="font-size: 0.78rem; width: 18px; color: var(--text-muted);">6:</span>
+                                        <input type="text" id="set-ha-osd-l6" class="form-input" style="flex: 1; font-family: monospace; font-size: 0.8rem;" placeholder="Строка 6 (опционально)">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px;">
+                                <button type="button" class="btn-scan" id="btn-ha-test" onclick="testHaOsdConnection()">🔍 Проверить связь с HA и рендеринг</button>
+                                <button type="button" class="btn-apply" id="btn-ha-save" onclick="saveHaOsdSettings()">💾 Применить настройки HA OSD</button>
+                            </div>
+
+                            <div id="ha-test-result" style="display: none; font-family: monospace; font-size: 0.78rem; background: #0b0f19; border: 1px solid #222f4c; border-radius: 7px; padding: 10px; white-space: pre-wrap; line-height: 1.4;"></div>
+
+                            <div class="notice-box" style="margin-top: 6px;">
+                                ⚡ <strong>Мгновенные Push-уведомления поверх видео:</strong><br>
+                                Home Assistant может мгновенно выводить предупреждения (звонок в дверь, детекция движения, открытие ворот) поверх видеопотока через REST webhook:<br>
+                                <code>POST http://[IP_камеры]:8080/cgi-bin/osd_push?line1=ВНИМАНИЕ!&line2=Движение+у+ворот&duration=10</code>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Side Mini-Preview with Interactive OSD Overlay -->
@@ -2225,6 +2331,7 @@
                     if (cfg.current_time) document.getElementById("cam-current-time").innerText = cfg.current_time;
 
                     updateOsdPreviewMarkers();
+                    loadHaOsdSettings();
                     showToast("Параметры камеры успешно загружены!");
                 })
                 .catch(() => {});
@@ -2444,6 +2551,180 @@
         setLanguage(currentLang);
         checkAuth();
         setInterval(updateStatus, 10000);
+        // --- HOME ASSISTANT OSD FUNCTIONS ---
+        function toggleHaOsdFields() {
+            const enabled = document.getElementById("set-ha-osd-enable").checked;
+            document.getElementById("ha-osd-fields").style.display = enabled ? "flex" : "none";
+            const badge = document.getElementById("ha-osd-badge");
+            if (badge) {
+                badge.innerText = enabled ? "Активно" : "Отключено";
+                badge.style.background = enabled ? "rgba(16, 185, 129, 0.2)" : "#334155";
+                badge.style.color = enabled ? "#34d399" : "#94a3b8";
+            }
+        }
+
+        function applyHaPreset(type) {
+            if (type === 'weather') {
+                document.getElementById('set-ha-osd-l1').value = "🌤️ {{ states('weather.forecast_home') | capitalize }} {{ state_attr('weather.forecast_home','temperature') }}°C";
+                document.getElementById('set-ha-osd-l2').value = "Влажность: {{ state_attr('weather.forecast_home','humidity') }}% | Давл: {{ (state_attr('weather.forecast_home','pressure')*0.750062)|round(0) }} мм";
+                document.getElementById('set-ha-osd-l3').value = "Ветер: {{ state_attr('weather.forecast_home','wind_speed') }} км/ч | Осадки: {{ state_attr('weather.forecast_home','precipitation') or 0 }} мм";
+                document.getElementById('set-ha-osd-l1-en').checked = true;
+                document.getElementById('set-ha-osd-l2-en').checked = true;
+                document.getElementById('set-ha-osd-l3-en').checked = true;
+            } else if (type === 'climate') {
+                document.getElementById('set-ha-osd-l1').value = "🌡️ Улица: {{ states('sensor.outdoor_temperature') }}°C | {{ states('sensor.outdoor_humidity') }}%";
+                document.getElementById('set-ha-osd-l2').value = "☀️ Освещенность: {{ states('sensor.outdoor_illuminance') }} lx";
+                document.getElementById('set-ha-osd-l3').value = "🏠 В доме: {{ states('sensor.indoor_temperature') }}°C | CO2: {{ states('sensor.co2') }} ppm";
+                document.getElementById('set-ha-osd-l1-en').checked = true;
+                document.getElementById('set-ha-osd-l2-en').checked = true;
+                document.getElementById('set-ha-osd-l3-en').checked = true;
+            } else if (type === 'lighting') {
+                document.getElementById('set-ha-osd-l1').value = "💡 Прожектор: {{ states('light.backyard_spotlight') | upper }}";
+                document.getElementById('set-ha-osd-l2').value = "💡 Входная группа: {{ states('light.front_door') | upper }}";
+                document.getElementById('set-ha-osd-l3').value = "⚡ Нагрузка сети: {{ states('sensor.power_consumption') }} W";
+                document.getElementById('set-ha-osd-l1-en').checked = true;
+                document.getElementById('set-ha-osd-l2-en').checked = true;
+                document.getElementById('set-ha-osd-l3-en').checked = true;
+            } else if (type === 'security') {
+                document.getElementById('set-ha-osd-l1').value = "🛡️ Режим: {{ states('alarm_control_panel.home_alarm') | upper }}";
+                document.getElementById('set-ha-osd-l2').value = "🚪 Ворота: {{ states('cover.gate') }} | Замок: {{ states('lock.front_door') }}";
+                document.getElementById('set-ha-osd-l3').value = "🚨 Калитка: {{ states('binary_sensor.wicket_door') }}";
+                document.getElementById('set-ha-osd-l1-en').checked = true;
+                document.getElementById('set-ha-osd-l2-en').checked = true;
+                document.getElementById('set-ha-osd-l3-en').checked = true;
+            }
+            showToast("Шаблоны пресета загружены в поля!", "info");
+        }
+
+        function loadHaOsdSettings() {
+            fetch(`${API_BASE}/cgi-bin/ha_osd?cmd=get`)
+                .then(r => r.json())
+                .then(cfg => {
+                    document.getElementById("set-ha-osd-enable").checked = !!cfg.enabled;
+                    if (cfg.ha_url) document.getElementById("set-ha-osd-url").value = cfg.ha_url;
+                    if (cfg.ha_token) document.getElementById("set-ha-osd-token").value = cfg.ha_token;
+                    if (cfg.poll_interval) document.getElementById("set-ha-osd-interval").value = cfg.poll_interval;
+                    if (cfg.osd_position) document.getElementById("set-ha-osd-pos").value = cfg.osd_position;
+
+                    if (Array.isArray(cfg.lines)) {
+                        for (let i = 0; i < 6; i++) {
+                            const l = cfg.lines[i];
+                            const elInput = document.getElementById(`set-ha-osd-l${i+1}`);
+                            const elEn = document.getElementById(`set-ha-osd-l${i+1}-en`);
+                            if (elInput && l) elInput.value = l.template || "";
+                            if (elEn && l) elEn.checked = !!l.enabled;
+                        }
+                    }
+                    toggleHaOsdFields();
+                })
+                .catch(() => {});
+        }
+
+        function saveHaOsdSettings() {
+            const btn = document.getElementById("btn-ha-save");
+            btn.disabled = true;
+            btn.innerText = "Сохранение...";
+
+            const lines = [];
+            for (let i = 1; i <= 6; i++) {
+                lines.push({
+                    enabled: document.getElementById(`set-ha-osd-l${i}-en`).checked,
+                    template: document.getElementById(`set-ha-osd-l${i}`).value
+                });
+            }
+
+            const payload = {
+                enabled: document.getElementById("set-ha-osd-enable").checked,
+                ha_url: document.getElementById("set-ha-osd-url").value.trim().replace(/\/$/, ""),
+                ha_token: document.getElementById("set-ha-osd-token").value.trim(),
+                poll_interval: parseInt(document.getElementById("set-ha-osd-interval").value, 10) || 10,
+                osd_position: document.getElementById("set-ha-osd-pos").value,
+                lines: lines
+            };
+
+            fetch(`${API_BASE}/cgi-bin/ha_osd?cmd=set`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            })
+            .then(r => r.json())
+            .then(res => {
+                btn.disabled = false;
+                btn.innerText = "💾 Применить настройки HA OSD";
+                if (res.status === "ok") {
+                    showToast("Настройки Home Assistant OSD сохранены и применены!", "success");
+                    toggleHaOsdFields();
+                } else {
+                    showToast(res.message || "Ошибка при сохранении", "error");
+                }
+            })
+            .catch(() => {
+                btn.disabled = false;
+                btn.innerText = "💾 Применить настройки HA OSD";
+                showToast("Ошибка сети при обращении к камере", "error");
+            });
+        }
+
+        function testHaOsdConnection() {
+            const btn = document.getElementById("btn-ha-test");
+            const resBox = document.getElementById("ha-test-result");
+            btn.disabled = true;
+            btn.innerText = "Тестирование...";
+            resBox.style.display = "block";
+            resBox.style.borderColor = "#222f4c";
+            resBox.style.color = "#94a3b8";
+            resBox.innerText = "⏳ Отправка тестового запроса в Home Assistant API...";
+
+            let tmpl = "";
+            for (let i = 1; i <= 6; i++) {
+                if (document.getElementById(`set-ha-osd-l${i}-en`).checked && document.getElementById(`set-ha-osd-l${i}`).value.trim()) {
+                    tmpl = document.getElementById(`set-ha-osd-l${i}`).value.trim();
+                    break;
+                }
+            }
+            if (!tmpl) tmpl = "HA Online | Время HA: {{ now().strftime('%H:%M:%S') }}";
+
+            const payload = {
+                ha_url: document.getElementById("set-ha-osd-url").value.trim().replace(/\/$/, ""),
+                ha_token: document.getElementById("set-ha-osd-token").value.trim(),
+                test_template: tmpl
+            };
+
+            fetch(`${API_BASE}/cgi-bin/ha_osd?cmd=test`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            })
+            .then(r => r.json())
+            .then(res => {
+                btn.disabled = false;
+                btn.innerText = "🔍 Проверить связь с HA и рендеринг";
+                if (res.status === "ok") {
+                    resBox.style.borderColor = "var(--success)";
+                    resBox.style.color = "#34d399";
+                    resBox.innerText = `✅ Успех!
+Ответ Home Assistant:
+"${res.rendered}"`;
+                    showToast("Связь с Home Assistant успешна!", "success");
+                } else {
+                    resBox.style.borderColor = "var(--danger)";
+                    resBox.style.color = "#f87171";
+                    resBox.innerText = `❌ Ошибка: ${res.message || "Не удалось связаться с Home Assistant"}`;
+                    showToast(res.message || "Ошибка связи с HA", "error");
+                }
+            })
+            .catch(e => {
+                btn.disabled = false;
+                btn.innerText = "🔍 Проверить связь с HA и рендеринг";
+                resBox.style.borderColor = "var(--danger)";
+                resBox.style.color = "#f87171";
+                resBox.innerText = `❌ Ошибка запроса к камере: ${e.message}`;
+                showToast("Ошибка запроса к камере", "error");
+            });
+        }
+
+        // Initialize Authentication & App
+        loadHaOsdSettings();
     </script>
 </body>
 </html>

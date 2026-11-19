@@ -1,0 +1,105 @@
+#!/bin/sh
+export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/mnt/custom:/var/tmp:$PATH"
+echo "Content-Type: application/json; charset=utf-8"
+echo "Access-Control-Allow-Origin: *"
+echo "Connection: close"
+echo ""
+
+CFG_FILE="/mnt/mtd/Config/ha_osd.json"
+FALLBACK_FILE="/var/tmp/ha_osd.json"
+mkdir -p /mnt/mtd/Config 2>/dev/null
+
+DATA="$QUERY_STRING"
+POST_DATA=""
+if [ "$REQUEST_METHOD" = "POST" ]; then
+    while read -r -t 1 LINE; do
+        POST_DATA="${POST_DATA}${LINE}"
+    done
+fi
+
+urldecode() {
+    echo -e "$(echo "$1" | sed 's/+/ /g;s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')"
+}
+
+get_param() {
+    VAL=$(echo "$DATA" | sed -n "s/.*[?&]$1=\([^&]*\).*/\1/p")
+    [ -z "$VAL" ] && VAL=$(echo "$DATA" | sed -n "s/^$1=\([^&]*\).*/\1/p")
+    urldecode "$VAL"
+}
+
+CMD=$(get_param "cmd")
+
+# 1. GET CONFIG
+if [ "$CMD" = "get" ] || [ -z "$CMD" -a "$REQUEST_METHOD" = "GET" ]; then
+    if [ -f "$CFG_FILE" ]; then
+        cat "$CFG_FILE"
+    elif [ -f "$FALLBACK_FILE" ]; then
+        cat "$FALLBACK_FILE"
+    else
+        cat << 'EOF'
+{
+  "enabled": false,
+  "ha_url": "http://10.10.11.11:8123",
+  "ha_token": "",
+  "poll_interval": 10,
+  "osd_position": "TopLeft",
+  "lines": [
+    { "enabled": true, "template": "🌤️ {{ states('weather.forecast_home') }} {{ state_attr('weather.forecast_home', 'temperature') }}°C" },
+    { "enabled": true, "template": "Давление: {{ states('sensor.pressure') }} мм | {{ states('sensor.illuminance') }} лк" },
+    { "enabled": true, "template": "Свет: {{ states('light.living_room') }} | Ворота: {{ states('cover.main_gate') }}" },
+    { "enabled": false, "template": "" },
+    { "enabled": false, "template": "" },
+    { "enabled": false, "template": "" }
+  ]
+}
+EOF
+    fi
+    exit 0
+fi
+
+# 2. SET CONFIG
+if [ "$CMD" = "set" ]; then
+    if [ -n "$POST_DATA" ]; then
+        echo "$POST_DATA" > "$CFG_FILE" 2>/dev/null || echo "$POST_DATA" > "$FALLBACK_FILE"
+        touch /var/tmp/ha_osd.reload 2>/dev/null
+        killall -HUP xm_ha_osd 2>/dev/null
+        echo '{"status": "ok", "message": "Настройки Home Assistant OSD успешно сохранены"}'
+    else
+        echo '{"status": "error", "message": "Пустое тело запроса"}'
+    fi
+    exit 0
+fi
+
+# 3. TEST TEMPLATES AGAINST HA
+if [ "$CMD" = "test" ]; then
+    HA_URL=$(echo "$POST_DATA" | sed -n 's/.*"ha_url"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
+    HA_TOKEN=$(echo "$POST_DATA" | sed -n 's/.*"ha_token"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
+    [ -z "$HA_URL" ] && HA_URL="http://10.10.11.11:8123"
+
+    if [ -z "$HA_TOKEN" ]; then
+        echo '{"status": "error", "message": "Укажите токен доступа Home Assistant"}'
+        exit 0
+    fi
+
+    # Extract template lines or test with a sample template
+    TMPL=$(echo "$POST_DATA" | sed -n 's/.*"test_template"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
+    if [ -z "$TMPL" ]; then
+        TMPL="HA Connection OK | Time: {{ now().strftime('%H:%M:%S') }}"
+    fi
+
+    # Make request to HA via wget or python micro-client
+    TEST_PAYLOAD="{\"template\": \"$TMPL\"}"
+    
+    RESP=$(wget -q -O - --header="Authorization: Bearer $HA_TOKEN" --header="Content-Type: application/json" --post-data="$TEST_PAYLOAD" --timeout=3 "$HA_URL/api/template" 2>/dev/null)
+    
+    if [ $? -eq 0 ] && [ -n "$RESP" ]; then
+        # Escape result for JSON
+        ESC_RESP=$(echo "$RESP" | sed 's/"/\\"/g' | tr '\r\n' ' ')
+        echo "{\"status\": \"ok\", \"message\": \"Связь с Home Assistant установлена успешно!\", \"rendered\": \"$ESC_RESP\"}"
+    else
+        echo '{"status": "error", "message": "Не удалось получить ответ от Home Assistant. Проверьте URL и Токен."}'
+    fi
+    exit 0
+fi
+
+echo '{"status": "error", "message": "Неизвестная команда"}'

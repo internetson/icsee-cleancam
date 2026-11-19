@@ -86,6 +86,12 @@ def compile_binaries(zig_path):
             "extra_args": [],
             "name": "xm_setcfg (Настройка параметров сенсора)"
         },
+        {
+            "src": os.path.join(SRC_DIR, "xm_ha_osd.c"),
+            "out": os.path.join(BUILD_DIR, "custom-x", "xm_ha_osd"),
+            "extra_args": [],
+            "name": "xm_ha_osd (Демон Home Assistant OSD)"
+        },
     ]
 
     for t in targets:

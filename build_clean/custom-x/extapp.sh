@@ -96,7 +96,7 @@ if [ -f /mnt/custom/default.script ]; then
 fi
 
 # Copy micro-binaries to ramfs to guarantee execution regardless of mount flags
-for b in xm_httpd xm_telnetd xm_ptz xm_cmd xm_rtspd xm_setcfg xm_snap xm_resetd wifi_manager.sh; do
+for b in xm_httpd xm_telnetd xm_ptz xm_cmd xm_rtspd xm_setcfg xm_snap xm_resetd xm_ha_osd wifi_manager.sh; do
     if [ -f "/mnt/custom/$b" ]; then
         cp "/mnt/custom/$b" "/var/tmp/$b" 2>/dev/null
         chmod 755 "/var/tmp/$b" 2>/dev/null
@@ -150,6 +150,19 @@ elif [ -x /mnt/custom/xm_resetd ]; then
     /mnt/custom/xm_resetd &
 fi
 
-# 10. Optimize memory & cache reclamation for 64MB RAM
+# 10. Start Home Assistant OSD Daemon (Hardware OSD overlays)
+killall -9 xm_ha_osd 2>/dev/null
+(
+    while true; do
+        if [ -x /var/tmp/xm_ha_osd ]; then
+            /var/tmp/xm_ha_osd >/var/tmp/ha_osd.log 2>&1
+        elif [ -x /mnt/custom/xm_ha_osd ]; then
+            /mnt/custom/xm_ha_osd >/var/tmp/ha_osd.log 2>&1
+        fi
+        sleep 5
+    done
+) &
+
+# 11. Optimize memory & cache reclamation for 64MB RAM
 echo 1024 > /proc/sys/vm/min_free_kbytes
 echo 1 > /proc/sys/vm/drop_caches

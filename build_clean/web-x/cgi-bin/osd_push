@@ -1,0 +1,82 @@
+#!/bin/sh
+export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/mnt/custom:/var/tmp:$PATH"
+echo "Content-Type: application/json; charset=utf-8"
+echo "Access-Control-Allow-Origin: *"
+echo "Connection: close"
+echo ""
+
+DATA="$QUERY_STRING"
+POST_DATA=""
+if [ "$REQUEST_METHOD" = "POST" ]; then
+    read -r -t 2 POST_DATA 2>/dev/null
+    if [ -n "$POST_DATA" ]; then
+        if [ -n "$DATA" ]; then
+            DATA="$DATA&$POST_DATA"
+        else
+            DATA="$POST_DATA"
+        fi
+    fi
+fi
+
+urldecode() {
+    echo -e "$(echo "$1" | sed 's/+/ /g;s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')"
+}
+
+get_param() {
+    VAL=$(echo "$DATA" | sed -n "s/.*[?&]$1=\([^&]*\).*/\1/p")
+    [ -z "$VAL" ] && VAL=$(echo "$DATA" | sed -n "s/^$1=\([^&]*\).*/\1/p")
+    urldecode "$VAL"
+}
+
+TEXT=$(get_param "text")
+LINE=$(get_param "line")
+DURATION=$(get_param "duration")
+L1=$(get_param "line1")
+L2=$(get_param "line2")
+L3=$(get_param "line3")
+L4=$(get_param "line4")
+L5=$(get_param "line5")
+L6=$(get_param "line6")
+
+[ -z "$LINE" ] && LINE=0
+[ -z "$DURATION" ] && DURATION=10
+
+# Try parsing JSON body if raw JSON was posted
+if [ -n "$POST_DATA" ]; then
+    [ -z "$TEXT" ] && TEXT=$(echo "$POST_DATA" | sed -n 's/.*"text"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
+    [ -z "$L1" ] && L1=$(echo "$POST_DATA" | sed -n 's/.*"line1"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
+    [ -z "$L2" ] && L2=$(echo "$POST_DATA" | sed -n 's/.*"line2"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
+    [ -z "$L3" ] && L3=$(echo "$POST_DATA" | sed -n 's/.*"line3"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
+    [ -z "$L4" ] && L4=$(echo "$POST_DATA" | sed -n 's/.*"line4"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
+    [ -z "$L5" ] && L5=$(echo "$POST_DATA" | sed -n 's/.*"line5"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
+    [ -z "$L6" ] && L6=$(echo "$POST_DATA" | sed -n 's/.*"line6"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
+    JL=$(echo "$POST_DATA" | sed -n 's/.*"line"[ ]*:[ ]*\([0-9]*\).*/\1/p')
+    JD=$(echo "$POST_DATA" | sed -n 's/.*"duration"[ ]*:[ ]*\([0-9]*\).*/\1/p')
+    [ -n "$JL" ] && LINE="$JL"
+    [ -n "$JD" ] && DURATION="$JD"
+fi
+
+if [ -z "$TEXT" ] && [ -z "$L1" ]; then
+    echo '{"status": "error", "message": "Параметр text или line1 обязателен"}'
+    exit 0
+fi
+
+NOW=$(date +%s)
+EXPIRES=$((NOW + DURATION))
+
+cat << EOF > /var/tmp/osd_push.json
+{
+  "text": "$TEXT",
+  "line": $LINE,
+  "line1": "$L1",
+  "line2": "$L2",
+  "line3": "$L3",
+  "line4": "$L4",
+  "line5": "$L5",
+  "line6": "$L6",
+  "expires_at": $EXPIRES
+}
+EOF
+
+touch /var/tmp/ha_osd.reload 2>/dev/null
+echo "{\"status\": \"ok\", \"message\": \"Уведомление отображено на $DURATION сек\"}"

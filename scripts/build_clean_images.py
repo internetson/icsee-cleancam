@@ -66,6 +66,7 @@ def build_custom():
         f.write("xm_setcfg m 755 0 0\n")
         f.write("xm_snap m 755 0 0\n")
         f.write("xm_resetd m 755 0 0\n")
+        f.write("xm_ha_osd m 755 0 0\n")
 
     if os.path.exists(out_sqsh): os.remove(out_sqsh)
     cmd = [
@@ -112,6 +113,8 @@ def build_web():
         f.write("cgi-bin/snapshot m 755 0 0\n")
         f.write("cgi-bin/auth m 755 0 0\n")
         f.write("cgi-bin/light m 755 0 0\n")
+        f.write("cgi-bin/ha_osd m 755 0 0\n")
+        f.write("cgi-bin/osd_push m 755 0 0\n")
 
     if os.path.exists(out_sqsh): os.remove(out_sqsh)
     cmd = [
