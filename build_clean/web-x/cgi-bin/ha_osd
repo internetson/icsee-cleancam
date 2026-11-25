@@ -1,24 +1,43 @@
 #!/bin/sh
 export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/mnt/custom:/var/tmp:$PATH"
+
+if [ -n "$REQUEST_METHOD" ]; then
+    if [ "$REQUEST_METHOD" = "OPTIONS" ]; then
+        echo "Access-Control-Allow-Origin: *"
+        echo "Access-Control-Allow-Methods: GET, POST, OPTIONS"
+        echo "Access-Control-Allow-Headers: Content-Type, Authorization"
+        echo "Connection: close"
+        echo ""
+        exit 0
+    fi
+    AUTH_BIN="/mnt/web/cgi-bin/auth"
+    [ ! -x "$AUTH_BIN" ] && AUTH_BIN="/var/tmp/auth"
+    if ! "$AUTH_BIN" --verify-admin >/dev/null 2>&1; then
+        echo "Status: 401 Unauthorized"
+        echo "Content-Type: application/json; charset=utf-8"
+        echo "Access-Control-Allow-Origin: *"
+        echo "Connection: close"
+        echo ""
+        echo '{"status": "error", "message": "Unauthorized"}'
+        exit 0
+    fi
+fi
+
 echo "Content-Type: application/json; charset=utf-8"
 echo "Access-Control-Allow-Origin: *"
+echo "Access-Control-Allow-Methods: GET, POST, OPTIONS"
+echo "Access-Control-Allow-Headers: Content-Type, Authorization"
 echo "Connection: close"
 echo ""
 
 CFG_FILE="/mnt/mtd/Config/ha_osd.json"
 FALLBACK_FILE="/var/tmp/ha_osd.json"
-mkdir -p /mnt/mtd/Config 2>/dev/null
+mkdir -p /mnt/mtd/Config /var/tmp 2>/dev/null
 
 DATA="$QUERY_STRING"
-POST_DATA=""
-if [ "$REQUEST_METHOD" = "POST" ]; then
-    while read -r -t 1 LINE; do
-        POST_DATA="${POST_DATA}${LINE}"
-    done
-fi
 
 urldecode() {
-    echo -e "$(echo "$1" | sed 's/+/ /g;s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')"
+    printf "%b\n" "$(echo "$1" | sed 's/+/ /g;s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')"
 }
 
 get_param() {
@@ -28,6 +47,18 @@ get_param() {
 }
 
 CMD=$(get_param "cmd")
+
+POST_DATA=""
+CFG_PARAM=$(get_param "cfg")
+if [ -n "$CFG_PARAM" ]; then
+    POST_DATA="$CFG_PARAM"
+elif [ "$REQUEST_METHOD" = "POST" ]; then
+    if [ -n "$CONTENT_LENGTH" ] && [ "$CONTENT_LENGTH" -gt 0 ] 2>/dev/null; then
+        POST_DATA=$(head -c "$CONTENT_LENGTH")
+    else
+        read -r -t 1 POST_DATA 2>/dev/null
+    fi
+fi
 
 # 1. GET CONFIG
 if [ "$CMD" = "get" ] || [ -z "$CMD" -a "$REQUEST_METHOD" = "GET" ]; then
@@ -42,7 +73,11 @@ if [ "$CMD" = "get" ] || [ -z "$CMD" -a "$REQUEST_METHOD" = "GET" ]; then
   "ha_url": "http://10.10.11.11:8123",
   "ha_token": "",
   "poll_interval": 10,
-  "osd_position": "TopLeft",
+  "round_precision": 1,
+  "pos_x": 160,
+  "pos_y": 6000,
+  "osd_position": "BottomLeft",
+  "front_color": "0xF0FFFFFF",
   "lines": [
     { "enabled": true, "template": "🌤️ {{ states('weather.forecast_home') }} {{ state_attr('weather.forecast_home', 'temperature') }}°C" },
     { "enabled": true, "template": "Давление: {{ states('sensor.pressure') }} мм | {{ states('sensor.illuminance') }} лк" },
@@ -72,32 +107,18 @@ fi
 
 # 3. TEST TEMPLATES AGAINST HA
 if [ "$CMD" = "test" ]; then
-    HA_URL=$(echo "$POST_DATA" | sed -n 's/.*"ha_url"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
-    HA_TOKEN=$(echo "$POST_DATA" | sed -n 's/.*"ha_token"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
-    [ -z "$HA_URL" ] && HA_URL="http://10.10.11.11:8123"
-
-    if [ -z "$HA_TOKEN" ]; then
-        echo '{"status": "error", "message": "Укажите токен доступа Home Assistant"}'
-        exit 0
+    HA_TEST_BIN="/var/tmp/xm_ha_osd"
+    [ ! -x "$HA_TEST_BIN" ] && HA_TEST_BIN="/mnt/custom/xm_ha_osd"
+    
+    TMP_JSON="/var/tmp/ha_test.json"
+    if [ -n "$POST_DATA" ]; then
+        echo "$POST_DATA" > "$TMP_JSON"
     fi
 
-    # Extract template lines or test with a sample template
-    TMPL=$(echo "$POST_DATA" | sed -n 's/.*"test_template"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
-    if [ -z "$TMPL" ]; then
-        TMPL="HA Connection OK | Time: {{ now().strftime('%H:%M:%S') }}"
-    fi
-
-    # Make request to HA via wget or python micro-client
-    TEST_PAYLOAD="{\"template\": \"$TMPL\"}"
-    
-    RESP=$(wget -q -O - --header="Authorization: Bearer $HA_TOKEN" --header="Content-Type: application/json" --post-data="$TEST_PAYLOAD" --timeout=3 "$HA_URL/api/template" 2>/dev/null)
-    
-    if [ $? -eq 0 ] && [ -n "$RESP" ]; then
-        # Escape result for JSON
-        ESC_RESP=$(echo "$RESP" | sed 's/"/\\"/g' | tr '\r\n' ' ')
-        echo "{\"status\": \"ok\", \"message\": \"Связь с Home Assistant установлена успешно!\", \"rendered\": \"$ESC_RESP\"}"
+    if [ -x "$HA_TEST_BIN" ]; then
+        $HA_TEST_BIN --test "$TMP_JSON" 2>/dev/null
     else
-        echo '{"status": "error", "message": "Не удалось получить ответ от Home Assistant. Проверьте URL и Токен."}'
+        echo '{"status": "error", "message": "Утилита xm_ha_osd не найдена на камере"}'
     fi
     exit 0
 fi
