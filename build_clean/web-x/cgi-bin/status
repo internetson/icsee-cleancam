@@ -1,6 +1,6 @@
 #!/bin/sh
 export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/mnt/custom:/var/tmp:$PATH"
-echo "Content-Type: application/json"
+echo "Content-Type: application/json; charset=utf-8"
 echo "Access-Control-Allow-Origin: *"
 echo "Connection: close"
 echo ""
@@ -11,7 +11,11 @@ if [ -f /var/tmp/wifi_status.json ]; then
 fi
 
 IFACE="eth2"
-[ -d "/sys/class/net/wlan0" ] && IFACE="wlan0"
+if [ -d "/sys/class/net/wlan0" ]; then
+    IFACE="wlan0"
+elif [ -d "/sys/class/net/ra0" ]; then
+    IFACE="ra0"
+fi
 
 IP=$(ifconfig $IFACE 2>/dev/null | grep 'inet addr' | awk -F: '{print $2}' | awk '{print $1}')
 [ -z "$IP" ] && IP=$(ifconfig eth0 2>/dev/null | grep 'inet addr' | awk -F: '{print $2}' | awk '{print $1}')

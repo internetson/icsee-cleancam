@@ -1,9 +1,5 @@
 #!/bin/sh
 export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/mnt/custom:/var/tmp:$PATH"
-echo "Content-Type: application/json; charset=utf-8"
-echo "Access-Control-Allow-Origin: *"
-echo "Connection: close"
-echo ""
 
 DATA="$QUERY_STRING"
 POST_DATA=""
@@ -19,7 +15,7 @@ if [ "$REQUEST_METHOD" = "POST" ]; then
 fi
 
 urldecode() {
-    echo -e "$(echo "$1" | sed 's/+/ /g;s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')"
+    printf "%b\n" "$(echo "$1" | sed 's/+/ /g;s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')"
 }
 
 get_param() {
@@ -27,6 +23,27 @@ get_param() {
     [ -z "$VAL" ] && VAL=$(echo "$DATA" | sed -n "s/^$1=\([^&]*\).*/\1/p")
     urldecode "$VAL"
 }
+
+# Stream/API Authentication check (uses C auth helper with real Base64 & token support)
+if [ -n "$REQUEST_METHOD" ]; then
+    AUTH_BIN="/mnt/web/cgi-bin/auth"
+    [ ! -x "$AUTH_BIN" ] && AUTH_BIN="/var/tmp/auth"
+    if ! "$AUTH_BIN" --verify-stream >/dev/null 2>&1; then
+        echo "Status: 401 Unauthorized"
+        echo "WWW-Authenticate: Basic realm=\"CleanCam\""
+        echo "Content-Type: application/json; charset=utf-8"
+        echo "Access-Control-Allow-Origin: *"
+        echo "Connection: close"
+        echo ""
+        echo '{"status": "error", "message": "Unauthorized: invalid or missing stream/API credentials"}'
+        exit 0
+    fi
+fi
+
+echo "Content-Type: application/json; charset=utf-8"
+echo "Access-Control-Allow-Origin: *"
+echo "Connection: close"
+echo ""
 
 TEXT=$(get_param "text")
 LINE=$(get_param "line")
@@ -37,6 +54,14 @@ L3=$(get_param "line3")
 L4=$(get_param "line4")
 L5=$(get_param "line5")
 L6=$(get_param "line6")
+POS_X=$(get_param "x")
+[ -z "$POS_X" ] && POS_X=$(get_param "pos_x")
+POS_Y=$(get_param "y")
+[ -z "$POS_Y" ] && POS_Y=$(get_param "pos_y")
+COLOR=$(get_param "color")
+[ -z "$COLOR" ] && COLOR=$(get_param "front_color")
+SIZE=$(get_param "size")
+[ -z "$SIZE" ] && SIZE=$(get_param "font_size")
 
 [ -z "$LINE" ] && LINE=0
 [ -z "$DURATION" ] && DURATION=10
@@ -50,11 +75,21 @@ if [ -n "$POST_DATA" ]; then
     [ -z "$L4" ] && L4=$(echo "$POST_DATA" | sed -n 's/.*"line4"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
     [ -z "$L5" ] && L5=$(echo "$POST_DATA" | sed -n 's/.*"line5"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
     [ -z "$L6" ] && L6=$(echo "$POST_DATA" | sed -n 's/.*"line6"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
+    [ -z "$POS_X" ] && POS_X=$(echo "$POST_DATA" | sed -n 's/.*"x"[ ]*:[ ]*\([0-9]*\).*/\1/p')
+    [ -z "$POS_X" ] && POS_X=$(echo "$POST_DATA" | sed -n 's/.*"pos_x"[ ]*:[ ]*\([0-9]*\).*/\1/p')
+    [ -z "$POS_Y" ] && POS_Y=$(echo "$POST_DATA" | sed -n 's/.*"y"[ ]*:[ ]*\([0-9]*\).*/\1/p')
+    [ -z "$POS_Y" ] && POS_Y=$(echo "$POST_DATA" | sed -n 's/.*"pos_y"[ ]*:[ ]*\([0-9]*\).*/\1/p')
+    [ -z "$COLOR" ] && COLOR=$(echo "$POST_DATA" | sed -n 's/.*"color"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
+    [ -z "$SIZE" ] && SIZE=$(echo "$POST_DATA" | sed -n 's/.*"size"[ ]*:[ ]*\([0-9]*\).*/\1/p')
     JL=$(echo "$POST_DATA" | sed -n 's/.*"line"[ ]*:[ ]*\([0-9]*\).*/\1/p')
     JD=$(echo "$POST_DATA" | sed -n 's/.*"duration"[ ]*:[ ]*\([0-9]*\).*/\1/p')
     [ -n "$JL" ] && LINE="$JL"
     [ -n "$JD" ] && DURATION="$JD"
 fi
+
+[ -z "$POS_X" ] && POS_X=-1
+[ -z "$POS_Y" ] && POS_Y=-1
+[ -z "$SIZE" ] && SIZE=0
 
 if [ -z "$TEXT" ] && [ -z "$L1" ]; then
     echo '{"status": "error", "message": "Параметр text или line1 обязателен"}'
@@ -64,19 +99,36 @@ fi
 NOW=$(date +%s)
 EXPIRES=$((NOW + DURATION))
 
+json_esc() {
+    printf '%s' "$1" | awk 'BEGIN{ORS=""} { if(NR>1) printf " "; gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\r/, ""); printf "%s", $0 }'
+}
+
+ESC_TEXT=$(json_esc "$TEXT")
+ESC_L1=$(json_esc "$L1")
+ESC_L2=$(json_esc "$L2")
+ESC_L3=$(json_esc "$L3")
+ESC_L4=$(json_esc "$L4")
+ESC_L5=$(json_esc "$L5")
+ESC_L6=$(json_esc "$L6")
+ESC_COLOR=$(json_esc "$COLOR")
+
 cat << EOF > /var/tmp/osd_push.json
 {
-  "text": "$TEXT",
+  "text": "$ESC_TEXT",
   "line": $LINE,
-  "line1": "$L1",
-  "line2": "$L2",
-  "line3": "$L3",
-  "line4": "$L4",
-  "line5": "$L5",
-  "line6": "$L6",
+  "line1": "$ESC_L1",
+  "line2": "$ESC_L2",
+  "line3": "$ESC_L3",
+  "line4": "$ESC_L4",
+  "line5": "$ESC_L5",
+  "line6": "$ESC_L6",
+  "x": $POS_X,
+  "y": $POS_Y,
+  "color": "$ESC_COLOR",
+  "size": $SIZE,
   "expires_at": $EXPIRES
 }
 EOF
 
 touch /var/tmp/ha_osd.reload 2>/dev/null
-echo "{\"status\": \"ok\", \"message\": \"Уведомление отображено на $DURATION сек\"}"
+echo "{\"status\": \"ok\", \"message\": \"Уведомление отправлено в OSD на $DURATION сек\", \"x\": $POS_X, \"y\": $POS_Y, \"color\": \"$ESC_COLOR\", \"size\": $SIZE}"

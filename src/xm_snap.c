@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <ctype.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -74,7 +75,9 @@ static int fetch_dvrip_snapshot(uint8_t **out_buf, size_t *out_len) {
 
     if (recv_all(s, hdr, 20) < 0) { close(s); return -1; }
     uint32_t resp_len = *(uint32_t *)(hdr + 16);
+    if (resp_len == 0 || resp_len > 65536) { close(s); return -1; }
     char *resp_buf = malloc(resp_len + 1);
+    if (!resp_buf) { close(s); return -1; }
     if (recv_all(s, (uint8_t *)resp_buf, resp_len) < 0) { free(resp_buf); close(s); return -1; }
     resp_buf[resp_len] = '\0';
 
@@ -119,6 +122,7 @@ static int fetch_dvrip_snapshot(uint8_t **out_buf, size_t *out_len) {
     if (img_len == 0 || img_len > 2 * 1024 * 1024) { close(s); return -1; }
 
     uint8_t *img_buf = malloc(img_len);
+    if (!img_buf) { close(s); return -1; }
     if (recv_all(s, img_buf, img_len) < 0) {
         free(img_buf);
         close(s);
@@ -140,8 +144,205 @@ static int fetch_dvrip_snapshot(uint8_t **out_buf, size_t *out_len) {
     return 0;
 }
 
+static int b64_char_to_val(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+static int base64_decode(const char *in, char *out, size_t max_out) {
+    if (!in || !out || max_out == 0) return 0;
+    size_t in_len = strlen(in);
+    size_t out_idx = 0;
+    for (size_t i = 0; i < in_len; ) {
+        while (i < in_len && (in[i] == ' ' || in[i] == '\r' || in[i] == '\n' || in[i] == '\t')) i++;
+        if (i >= in_len) break;
+        int a = b64_char_to_val(in[i++]);
+        int b = (i < in_len) ? b64_char_to_val(in[i++]) : -1;
+        int c = (i < in_len) ? b64_char_to_val(in[i++]) : -1;
+        int d = (i < in_len) ? b64_char_to_val(in[i++]) : -1;
+        if (a < 0 || b < 0) break;
+        if (out_idx < max_out - 1) out[out_idx++] = (char)((a << 2) | (b >> 4));
+        if (c >= 0 && out_idx < max_out - 1) out[out_idx++] = (char)(((b & 0xF) << 4) | (c >> 2));
+        if (d >= 0 && out_idx < max_out - 1) out[out_idx++] = (char)(((c & 0x3) << 6) | d);
+    }
+    out[out_idx] = '\0';
+    return (int)out_idx;
+}
+
+static int check_snapshot_auth(void) {
+    FILE *f = fopen("/mnt/mtd/Config/stream_auth.json", "r");
+    if (!f) return 1; // No stream auth config -> allow
+
+    char buf[1024] = {0};
+    fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+
+    int enabled = 0;
+    char *en = strstr(buf, "\"enabled\"");
+    if (en) {
+        char *col = strchr(en, ':');
+        if (col) {
+            while (*col == ':' || *col == ' ' || *col == '\t') col++;
+            if (*col == '1' || strncmp(col, "true", 4) == 0) enabled = 1;
+        }
+    }
+    if (!enabled) return 1; // Stream auth disabled -> allow
+
+    char stream_user[64] = "stream", stream_pass[64] = "stream123";
+    char *u = strstr(buf, "\"username\"");
+    if (u) {
+        char *q1 = strchr(u, ':');
+        if (q1) {
+            q1 = strchr(q1, '"');
+            if (q1) {
+                char *q2 = strchr(q1 + 1, '"');
+                if (q2) {
+                    size_t l = q2 - (q1 + 1);
+                    if (l >= sizeof(stream_user)) l = sizeof(stream_user) - 1;
+                    strncpy(stream_user, q1 + 1, l);
+                    stream_user[l] = '\0';
+                }
+            }
+        }
+    }
+    char *p = strstr(buf, "\"password\"");
+    if (p) {
+        char *q1 = strchr(p, ':');
+        if (q1) {
+            q1 = strchr(q1, '"');
+            if (q1) {
+                char *q2 = strchr(q1 + 1, '"');
+                if (q2) {
+                    size_t l = q2 - (q1 + 1);
+                    if (l >= sizeof(stream_pass)) l = sizeof(stream_pass) - 1;
+                    strncpy(stream_pass, q1 + 1, l);
+                    stream_pass[l] = '\0';
+                }
+            }
+        }
+    }
+
+    // Load admin credentials fallback
+    char admin_user[64] = "admin", admin_pass[64] = "admin";
+    FILE *fa = fopen("/mnt/mtd/Config/web_auth.json", "r");
+    if (fa) {
+        char abuf[1024] = {0};
+        fread(abuf, 1, sizeof(abuf) - 1, fa);
+        fclose(fa);
+        char *au = strstr(abuf, "\"username\"");
+        if (au) {
+            char *q1 = strchr(au, ':');
+            if (q1) {
+                q1 = strchr(q1, '"');
+                if (q1) {
+                    char *q2 = strchr(q1 + 1, '"');
+                    if (q2) {
+                        size_t l = q2 - (q1 + 1);
+                        if (l >= sizeof(admin_user)) l = sizeof(admin_user) - 1;
+                        strncpy(admin_user, q1 + 1, l);
+                        admin_user[l] = '\0';
+                    }
+                }
+            }
+        }
+        char *ap = strstr(abuf, "\"password\"");
+        if (ap) {
+            char *q1 = strchr(ap, ':');
+            if (q1) {
+                q1 = strchr(q1, '"');
+                if (q1) {
+                    char *q2 = strchr(q1 + 1, '"');
+                    if (q2) {
+                        size_t l = q2 - (q1 + 1);
+                        if (l >= sizeof(admin_pass)) l = sizeof(admin_pass) - 1;
+                        strncpy(admin_pass, q1 + 1, l);
+                        admin_pass[l] = '\0';
+                    }
+                }
+            }
+        }
+    }
+
+    const char *qs = getenv("QUERY_STRING");
+
+    // 1. Check token in QUERY_STRING (used by authenticated WebUI sessions)
+    if (qs) {
+        const char *t = strstr(qs, "token=");
+        if (t) {
+            t += 6;
+            char req_tok[128] = {0};
+            size_t ti = 0;
+            while (*t && *t != '&' && ti < sizeof(req_tok) - 1) {
+                req_tok[ti++] = *t++;
+            }
+            req_tok[ti] = '\0';
+
+            FILE *tf = fopen("/var/tmp/web_session.token", "r");
+            if (tf) {
+                char saved_tok[128] = {0};
+                if (fscanf(tf, "%127s", saved_tok) == 1 && strcmp(req_tok, saved_tok) == 0) {
+                    fclose(tf);
+                    return 1;
+                }
+                fclose(tf);
+            }
+        }
+    }
+
+    // 2. Check HTTP_AUTHORIZATION header (Basic <base64>)
+    const char *auth_hdr = getenv("HTTP_AUTHORIZATION");
+    if (auth_hdr && strncasecmp(auth_hdr, "Basic ", 6) == 0) {
+        const char *b64 = auth_hdr + 6;
+        while (*b64 == ' ') b64++;
+        char decoded[128] = {0};
+        base64_decode(b64, decoded, sizeof(decoded));
+        char *colon = strchr(decoded, ':');
+        if (colon) {
+            *colon = '\0';
+            const char *u_in = decoded;
+            const char *p_in = colon + 1;
+            if (strcmp(u_in, stream_user) == 0 && strcmp(p_in, stream_pass) == 0) return 1;
+            if (strcmp(u_in, admin_user) == 0 && strcmp(p_in, admin_pass) == 0) return 1;
+        }
+    }
+
+    // 3. Check user & pass in QUERY_STRING (convenient for curl / Home Assistant / scripts)
+    if (qs) {
+        const char *u_ptr = strstr(qs, "user=");
+        const char *p_ptr = strstr(qs, "pass=");
+        if (u_ptr && p_ptr) {
+            char u_val[64] = {0}, p_val[64] = {0};
+            u_ptr += 5;
+            size_t ui = 0;
+            while (*u_ptr && *u_ptr != '&' && ui < sizeof(u_val) - 1) u_val[ui++] = *u_ptr++;
+            u_val[ui] = '\0';
+
+            p_ptr += 5;
+            size_t pi = 0;
+            while (*p_ptr && *p_ptr != '&' && pi < sizeof(p_val) - 1) p_val[pi++] = *p_ptr++;
+            p_val[pi] = '\0';
+
+            if (strcmp(u_val, stream_user) == 0 && strcmp(p_val, stream_pass) == 0) return 1;
+            if (strcmp(u_val, admin_user) == 0 && strcmp(p_val, admin_pass) == 0) return 1;
+        }
+    }
+
+    return 0; // Unauthorized
+}
+
 int main(int argc, char **argv) {
     int is_cgi = (getenv("REQUEST_METHOD") != NULL);
+    if (is_cgi && !check_snapshot_auth()) {
+        printf("Status: 401 Unauthorized\r\n"
+               "WWW-Authenticate: Basic realm=\"CleanCam\"\r\n"
+               "Content-Type: text/plain\r\n\r\n"
+               "401 Unauthorized\n");
+        return 0;
+    }
     long now = get_current_time_ms();
     long cache_mtime = get_file_mtime_ms(SNAP_CACHE);
 
@@ -153,16 +354,17 @@ int main(int argc, char **argv) {
         int fd = open(SNAP_CACHE, O_RDONLY);
         if (fd >= 0) {
             struct stat st;
-            fstat(fd, &st);
-            img_len = st.st_size;
-            img_data = malloc(img_len);
-            if (read(fd, img_data, img_len) == (ssize_t)img_len) {
-                close(fd);
-                goto serve;
+            if (fstat(fd, &st) == 0 && st.st_size > 0 && st.st_size <= 2 * 1024 * 1024) {
+                img_len = (size_t)st.st_size;
+                img_data = malloc(img_len);
+                if (img_data && read(fd, img_data, img_len) == (ssize_t)img_len) {
+                    close(fd);
+                    goto serve;
+                }
+                free(img_data);
+                img_data = NULL;
             }
             close(fd);
-            free(img_data);
-            img_data = NULL;
         }
     }
 
@@ -170,14 +372,22 @@ int main(int argc, char **argv) {
     if (fetch_dvrip_snapshot(&img_data, &img_len) < 0) {
         // Fallback: try cache even if older
         int fd = open(SNAP_CACHE, O_RDONLY);
+        int ok = 0;
         if (fd >= 0) {
             struct stat st;
-            fstat(fd, &st);
-            img_len = st.st_size;
-            img_data = malloc(img_len);
-            read(fd, img_data, img_len);
+            if (fstat(fd, &st) == 0 && st.st_size > 0 && st.st_size <= 2 * 1024 * 1024) {
+                img_len = (size_t)st.st_size;
+                img_data = malloc(img_len);
+                if (img_data && read(fd, img_data, img_len) == (ssize_t)img_len) {
+                    ok = 1;
+                } else {
+                    free(img_data);
+                    img_data = NULL;
+                }
+            }
             close(fd);
-        } else {
+        }
+        if (!ok) {
             if (is_cgi) {
                 printf("Status: 503 Service Unavailable\r\nContent-Type: text/plain\r\n\r\nFailed to capture snapshot.\n");
             } else {

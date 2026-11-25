@@ -58,7 +58,9 @@ int main(int argc, char **argv) {
 
     if (recv_all(s, hdr, 20) < 0) { close(s); return 1; }
     uint32_t resp_len = *(uint32_t *)(hdr + 16);
+    if (resp_len == 0 || resp_len > 65536) { close(s); return 1; }
     char *resp_buf = malloc(resp_len + 1);
+    if (!resp_buf) { close(s); return 1; }
     if (recv_all(s, (uint8_t *)resp_buf, resp_len) < 0) { free(resp_buf); close(s); return 1; }
     resp_buf[resp_len] = '\0';
 
@@ -108,11 +110,16 @@ int main(int argc, char **argv) {
 
     if (recv_all(s, hdr, 20) == 0) {
         uint32_t rlen = *(uint32_t *)(hdr + 16);
-        char *rbuf = malloc(rlen + 1);
-        recv_all(s, (uint8_t *)rbuf, rlen);
-        rbuf[rlen] = '\0';
-        printf("%s\n", rbuf);
-        free(rbuf);
+        if (rlen > 0 && rlen <= 65536) {
+            char *rbuf = malloc(rlen + 1);
+            if (rbuf) {
+                if (recv_all(s, (uint8_t *)rbuf, rlen) == 0) {
+                    rbuf[rlen] = '\0';
+                    printf("%s\n", rbuf);
+                }
+                free(rbuf);
+            }
+        }
     }
 
     close(s);

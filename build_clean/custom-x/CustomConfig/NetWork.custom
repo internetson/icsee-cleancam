@@ -10,8 +10,27 @@
     "NetWork.OnvifPwdCheckout": {
         "Enable": false
     },
+    "NetWork.Nat": {
+        "Addr": "127.0.0.1",
+        "NatEnable": false,
+        "Port": 0
+    },
     "NetWork.DisableXmServerConn": {
-        "Enable": true
+        "DisableAll": true,
+        "DisableDSS": true,
+        "DisableNAT": true,
+        "DisableRPS": true
+    },
+    "NetWork.PMS": {
+        "Enable": false,
+        "ServName": "127.0.0.1",
+        "Port": 0
+    },
+    "NetWork.OnlineUpgrade": {
+        "Enable": false,
+        "AutoCheck": false,
+        "ServerAddr": "127.0.0.1",
+        "ServerPort": 0
     },
     "NetWork.NetCommon": {
         "HostIP": "192.168.0.111",
