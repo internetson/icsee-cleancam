@@ -1,0 +1,246 @@
+#!/bin/sh
+export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/mnt/custom:/var/tmp:$PATH"
+
+# Handle CORS OPTIONS
+if [ "$REQUEST_METHOD" = "OPTIONS" ]; then
+    echo "Access-Control-Allow-Origin: *"
+    echo "Access-Control-Allow-Methods: GET, POST, OPTIONS"
+    echo "Access-Control-Allow-Headers: Content-Type, Authorization"
+    echo "Connection: close"
+    echo ""
+    exit 0
+fi
+
+# 1. Strict admin authentication check (always enforced)
+if [ -n "$REQUEST_METHOD" ]; then
+    AUTH_BIN="/mnt/web/cgi-bin/auth"
+    [ ! -x "$AUTH_BIN" ] && AUTH_BIN="/var/tmp/auth"
+    if ! "$AUTH_BIN" --verify-admin >/dev/null 2>&1; then
+        echo "Status: 401 Unauthorized"
+        echo "Content-Type: application/json; charset=utf-8"
+        echo "Access-Control-Allow-Origin: *"
+        echo "Connection: close"
+        echo ""
+        echo '{"status": "error", "message": "Unauthorized: session expired or invalid"}'
+        exit 0
+    fi
+fi
+
+echo "Content-Type: application/json; charset=utf-8"
+echo "Access-Control-Allow-Origin: *"
+echo "Access-Control-Allow-Methods: GET, POST, OPTIONS"
+echo "Access-Control-Allow-Headers: Content-Type, Authorization"
+echo "Connection: close"
+echo ""
+
+# 2. Enforce upload size limit before writing to RAM (max 512 KB)
+if [ -n "$CONTENT_LENGTH" ] && [ "$CONTENT_LENGTH" -gt 524288 ] 2>/dev/null; then
+    echo '{"status": "error", "message": "Upload too large (max 512 KB)"}'
+    exit 0
+fi
+
+# 3. Parse Query Params
+TARGET="auto"
+FILENAME=""
+DO_REBOOT="1"
+
+case "$QUERY_STRING" in
+    *target=*) TARGET=$(echo "$QUERY_STRING" | sed -n 's/.*[?&]target=\([^&]*\).*/\1/p') ;;
+esac
+[ "$TARGET" = "auto" ] && case "$QUERY_STRING" in target=*) TARGET=$(echo "$QUERY_STRING" | sed -n 's/^target=\([^&]*\).*/\1/p') ;; esac
+
+case "$QUERY_STRING" in
+    *filename=*) FILENAME=$(echo "$QUERY_STRING" | sed -n 's/.*[?&]filename=\([^&]*\).*/\1/p') ;;
+esac
+[ -z "$FILENAME" ] && case "$QUERY_STRING" in filename=*) FILENAME=$(echo "$QUERY_STRING" | sed -n 's/^filename=\([^&]*\).*/\1/p') ;; esac
+
+case "$QUERY_STRING" in
+    *reboot=*) DO_REBOOT=$(echo "$QUERY_STRING" | sed -n 's/.*[?&]reboot=\([^&]*\).*/\1/p') ;;
+esac
+[ "$DO_REBOOT" = "1" ] && case "$QUERY_STRING" in reboot=*) DO_REBOOT=$(echo "$QUERY_STRING" | sed -n 's/^reboot=\([^&]*\).*/\1/p') ;; esac
+
+# Ensure flasher is available in RAM
+FLASHER="/var/tmp/xm_flasher"
+if [ ! -x "$FLASHER" ]; then
+    if [ -f "/mnt/custom/xm_flasher" ]; then
+        cp -f "/mnt/custom/xm_flasher" "$FLASHER" 2>/dev/null
+        chmod 755 "$FLASHER" 2>/dev/null
+    fi
+fi
+
+if [ ! -x "$FLASHER" ]; then
+    echo '{"status": "error", "message": "xm_flasher binary not found on device"}'
+    exit 0
+fi
+
+# 4. Read uploaded binary stream into /var/tmp/fw_upload.bin (capped at 524288 bytes)
+UPLOAD_FILE="/var/tmp/fw_upload.bin"
+rm -f "$UPLOAD_FILE" /var/tmp/flash_custom.log /var/tmp/flash_web.log 2>/dev/null
+
+if [ -n "$CONTENT_LENGTH" ] && [ "$CONTENT_LENGTH" -gt 0 ] 2>/dev/null; then
+    head -c "$CONTENT_LENGTH" > "$UPLOAD_FILE"
+else
+    head -c 524289 > "$UPLOAD_FILE"
+fi
+
+UPLOAD_SZ=$(ls -l "$UPLOAD_FILE" 2>/dev/null | awk '{print $5}')
+if [ -z "$UPLOAD_SZ" ] || [ "$UPLOAD_SZ" -le 0 ] 2>/dev/null; then
+    echo '{"status": "error", "message": "Uploaded file is empty or missing"}'
+    rm -f "$UPLOAD_FILE" 2>/dev/null
+    exit 0
+fi
+if [ "$UPLOAD_SZ" -gt 524288 ] 2>/dev/null; then
+    echo '{"status": "error", "message": "Uploaded file exceeds 512 KB RAM limit"}'
+    rm -f "$UPLOAD_FILE" 2>/dev/null
+    exit 0
+fi
+
+# Helper functions to flash partitions (write errors to log file, NEVER stdout)
+flash_custom() {
+    _img="$1"
+    _sz=$(ls -l "$_img" 2>/dev/null | awk '{print $5}')
+    if [ -z "$_sz" ] || [ "$_sz" -gt 196608 ]; then
+        echo "custom image size ($_sz bytes) exceeds partition limit (196608 bytes)" > /var/tmp/flash_custom.log
+        return 1
+    fi
+    _magic=$(head -c 4 "$_img" 2>/dev/null)
+    if [ "$_magic" != "hsqs" ] && [ "$_magic" != "sqsh" ]; then
+        echo "custom image is not a valid SquashFS image" > /var/tmp/flash_custom.log
+        return 1
+    fi
+    "$FLASHER" /dev/mtd4 "$_img" 196608 > /var/tmp/flash_custom.log 2>&1
+    return $?
+}
+
+flash_web() {
+    _img="$1"
+    _sz=$(ls -l "$_img" 2>/dev/null | awk '{print $5}')
+    if [ -z "$_sz" ] || [ "$_sz" -gt 131072 ]; then
+        echo "web image size ($_sz bytes) exceeds partition limit (131072 bytes)" > /var/tmp/flash_web.log
+        return 1
+    fi
+    _magic=$(head -c 4 "$_img" 2>/dev/null)
+    if [ "$_magic" != "hsqs" ] && [ "$_magic" != "sqsh" ]; then
+        echo "web image is not a valid SquashFS image" > /var/tmp/flash_web.log
+        return 1
+    fi
+    "$FLASHER" /dev/mtd3 "$_img" 131072 > /var/tmp/flash_web.log 2>&1
+    return $?
+}
+
+FLASHED_SOMETHING=0
+FLASH_ERR=""
+
+# Check if payload is a TAR or TAR.GZ archive
+IS_TAR=0
+TAR_LIST=""
+if TAR_LIST=$(tar -tzf "$UPLOAD_FILE" 2>/dev/null); then
+    IS_TAR=1
+    TAR_OPTS="-xzf"
+elif TAR_LIST=$(tar -tf "$UPLOAD_FILE" 2>/dev/null); then
+    IS_TAR=1
+    TAR_OPTS="-xf"
+fi
+
+if [ "$IS_TAR" = "1" ]; then
+    # Protect against Tar Slip (path traversal / absolute paths)
+    if echo "$TAR_LIST" | grep -qE '(^/|^\.\./|/\.\./|/\.\.$)'; then
+        FLASH_ERR="Небезопасные пути внутри tar-архива отклонены"
+    else
+        EXTRACT_DIR="/var/tmp/fw_extracted"
+        rm -rf "$EXTRACT_DIR" 2>/dev/null
+        mkdir -p "$EXTRACT_DIR" 2>/dev/null
+        tar $TAR_OPTS "$UPLOAD_FILE" -C "$EXTRACT_DIR" 2>/dev/null
+
+        CUSTOM_CANDIDATE=""
+        for c in "$EXTRACT_DIR"/custom*.squashfs "$EXTRACT_DIR"/custom*.bin "$EXTRACT_DIR"/*/custom*.squashfs; do
+            if [ -f "$c" ]; then
+                CUSTOM_CANDIDATE="$c"
+                break
+            fi
+        done
+
+        WEB_CANDIDATE=""
+        for w in "$EXTRACT_DIR"/web*.squashfs "$EXTRACT_DIR"/web*.bin "$EXTRACT_DIR"/*/web*.squashfs; do
+            if [ -f "$w" ]; then
+                WEB_CANDIDATE="$w"
+                break
+            fi
+        done
+
+        if [ -n "$CUSTOM_CANDIDATE" ]; then
+            if flash_custom "$CUSTOM_CANDIDATE"; then
+                FLASHED_SOMETHING=1
+            else
+                FLASH_ERR="Ошибка прошивки custom раздела из архива: $(cat /var/tmp/flash_custom.log 2>/dev/null)"
+            fi
+        fi
+
+        if [ -z "$FLASH_ERR" ] && [ -n "$WEB_CANDIDATE" ]; then
+            if flash_web "$WEB_CANDIDATE"; then
+                FLASHED_SOMETHING=1
+            else
+                FLASH_ERR="Ошибка прошивки web раздела из архива: $(cat /var/tmp/flash_web.log 2>/dev/null)"
+            fi
+        fi
+
+        rm -rf "$EXTRACT_DIR" 2>/dev/null
+
+        if [ "$FLASHED_SOMETHING" = "0" ] && [ -z "$FLASH_ERR" ]; then
+            FLASH_ERR="В архиве не найдены образы custom-x.squashfs или web-x.squashfs"
+        fi
+    fi
+else
+    # Single file upload
+    if [ "$TARGET" = "auto" ] || [ -z "$TARGET" ]; then
+        case "$FILENAME" in
+            *custom*) TARGET="custom" ;;
+            *web*) TARGET="web" ;;
+            *)
+                if [ "$UPLOAD_SZ" -gt 131072 ] && [ "$UPLOAD_SZ" -le 196608 ]; then
+                    TARGET="custom"
+                elif [ "$UPLOAD_SZ" -le 131072 ]; then
+                    TARGET="web"
+                fi
+                ;;
+        esac
+    fi
+
+    if [ "$TARGET" = "custom" ]; then
+        if flash_custom "$UPLOAD_FILE"; then
+            FLASHED_SOMETHING=1
+        else
+            FLASH_ERR="Ошибка прошивки раздела custom (mtd4): $(cat /var/tmp/flash_custom.log 2>/dev/null)"
+        fi
+    elif [ "$TARGET" = "web" ]; then
+        if flash_web "$UPLOAD_FILE"; then
+            FLASHED_SOMETHING=1
+        else
+            FLASH_ERR="Ошибка прошивки раздела web (mtd3): $(cat /var/tmp/flash_web.log 2>/dev/null)"
+        fi
+    else
+        FLASH_ERR="Не удалось определить целевой раздел (размер: $UPLOAD_SZ байт, имя: $FILENAME). Укажите раздел вручную."
+    fi
+fi
+
+# Cleanup uploaded temporary binary
+rm -f "$UPLOAD_FILE" 2>/dev/null
+
+if [ -n "$FLASH_ERR" ]; then
+    SAFE_ERR=$(printf '%s' "$FLASH_ERR" | awk 'BEGIN{ORS=""} { if(NR>1) printf " "; gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\r/, ""); printf "%s", $0 }')
+    echo "{\"status\": \"error\", \"message\": \"$SAFE_ERR\"}"
+    exit 0
+fi
+
+if [ "$FLASHED_SOMETHING" = "1" ]; then
+    if [ "$DO_REBOOT" = "1" ]; then
+        echo '{"status": "ok", "message": "Прошивка успешно записана и верифицирована! Перезагрузка...", "reboot": true}'
+        sync
+        (sleep 2 && reboot -f) >/dev/null 2>&1 &
+    else
+        echo '{"status": "ok", "message": "Раздел успешно записан и верифицирован!", "reboot": false}'
+    fi
+else
+    echo '{"status": "error", "message": "Не удалось прошить ни одного раздела"}'
+fi
+exit 0

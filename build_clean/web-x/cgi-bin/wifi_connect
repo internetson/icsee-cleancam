@@ -1,6 +1,29 @@
 #!/bin/sh
 export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/mnt/custom:/var/tmp:$PATH"
-echo "Content-Type: application/json"
+
+if [ -n "$REQUEST_METHOD" ]; then
+    if [ "$REQUEST_METHOD" = "OPTIONS" ]; then
+        echo "Access-Control-Allow-Origin: *"
+        echo "Access-Control-Allow-Methods: GET, POST, OPTIONS"
+        echo "Access-Control-Allow-Headers: Content-Type, Authorization"
+        echo "Connection: close"
+        echo ""
+        exit 0
+    fi
+    AUTH_BIN="/mnt/web/cgi-bin/auth"
+    [ ! -x "$AUTH_BIN" ] && AUTH_BIN="/var/tmp/auth"
+    if ! "$AUTH_BIN" --verify-admin >/dev/null 2>&1; then
+        echo "Status: 401 Unauthorized"
+        echo "Content-Type: application/json; charset=utf-8"
+        echo "Access-Control-Allow-Origin: *"
+        echo "Connection: close"
+        echo ""
+        echo '{"status": "error", "message": "Unauthorized"}'
+        exit 0
+    fi
+fi
+
+echo "Content-Type: application/json; charset=utf-8"
 echo "Access-Control-Allow-Origin: *"
 echo "Connection: close"
 echo ""
@@ -8,11 +31,15 @@ echo ""
 # Read from QUERY_STRING or stdin
 POST_DATA="$QUERY_STRING"
 if [ "$REQUEST_METHOD" = "POST" ] && [ -z "$POST_DATA" ]; then
-    read -r -t 1 POST_DATA 2>/dev/null
+    if [ -n "$CONTENT_LENGTH" ] && [ "$CONTENT_LENGTH" -gt 0 ] 2>/dev/null; then
+        POST_DATA=$(head -c "$CONTENT_LENGTH")
+    else
+        read -r -t 1 POST_DATA 2>/dev/null
+    fi
 fi
 
 urldecode() {
-    echo "$1" | sed 's/+/ /g; s/%/\\x/g' | xargs -0 printf "%b" 2>/dev/null || echo "$1"
+    printf "%b\n" "$(echo "$1" | sed 's/+/ /g;s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')"
 }
 
 RAW_SSID=$(echo "$POST_DATA" | sed -n 's/.*ssid=\([^&]*\).*/\1/p')
@@ -24,8 +51,8 @@ if [ -z "$RAW_SSID" ]; then
     RAW_PASS=$(echo "$POST_DATA" | sed -n 's/.*"password"[ ]*:[ ]*"\([^"]*\)".*/\1/p')
 fi
 
-SSID=$(urldecode "$RAW_SSID")
-PASS=$(urldecode "$RAW_PASS")
+SSID=$(urldecode "$RAW_SSID" | awk 'BEGIN{ORS=""} { gsub(/[\r\n"]/, ""); gsub(/\\/, "\\\\"); printf "%s", $0 }')
+PASS=$(urldecode "$RAW_PASS" | awk 'BEGIN{ORS=""} { gsub(/[\r\n"]/, ""); printf "%s", $0 }')
 
 if [ -z "$SSID" ]; then
     echo '{"status": "error", "message": "Имя сети (SSID) не указано!"}'
@@ -35,18 +62,30 @@ fi
 mkdir -p /mnt/mtd/Config /mnt/mtd/Log 2>/dev/null
 
 # Write wpa.conf
-cat << EOF > /mnt/mtd/Config/wpa.conf
+if [ -n "$PASS" ]; then
+    cat << EOF > /mnt/mtd/Config/wpa.conf
+ctrl_interface=/var/run/wpa_supplicant
 ctrl_interface_group=0
 ap_scan=1
 
 network={
 	ssid="$SSID"
 	key_mgmt=WPA-PSK
-	pairwise=CCMP TKIP
-	group=CCMP TKIP
 	psk="$PASS"
 }
 EOF
+else
+    cat << EOF > /mnt/mtd/Config/wpa.conf
+ctrl_interface=/var/run/wpa_supplicant
+ctrl_interface_group=0
+ap_scan=1
+
+network={
+	ssid="$SSID"
+	key_mgmt=NONE
+}
+EOF
+fi
 
 # Enable WLan in Xiongmai settings
 echo "ENABLE = 1" > /mnt/mtd/Config/WLan
@@ -56,4 +95,4 @@ sync
 # Signal the background watchdog to immediately connect to this Wi-Fi
 touch /var/tmp/wifi_trigger_connect
 
-echo '{"status": "ok", "message": "Настройки сохранены! Камера подключается к сети: '"$SSID"'..."}'
+echo '{"status": "ok", "message": "Настройки сохранены! Выполняется подключение к сети: '"$SSID"'..."}'

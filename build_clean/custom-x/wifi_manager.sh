@@ -3,6 +3,7 @@
 # CleanCam Wi-Fi Client & Fallback Access Point (AP) Manager
 # ==============================================================================
 export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/mnt/custom:/var/tmp:$PATH"
+export LD_LIBRARY_PATH="/mnt/web/lib:/usr/lib:/lib:$LD_LIBRARY_PATH"
 
 WIFI_CONF="/mnt/mtd/Config/wpa.conf"
 AP_CONF="/var/tmp/hostapd.conf"
@@ -10,7 +11,25 @@ DHCP_CONF="/var/tmp/udhcpd.conf"
 STATUS_JSON="/var/tmp/wifi_status.json"
 
 IFACE="eth2"
-[ -d "/sys/class/net/wlan0" ] && IFACE="wlan0"
+if [ -d "/sys/class/net/wlan0" ]; then
+    IFACE="wlan0"
+elif [ -d "/sys/class/net/ra0" ]; then
+    IFACE="ra0"
+fi
+
+# Set active device hostname: CleanCam-<MAC_SUFFIX>
+CAM_HOST="CleanCam"
+for _if in eth2 wlan0 ra0 eth0; do
+    if [ -f "/sys/class/net/$_if/address" ]; then
+        _raw=$(cat "/sys/class/net/$_if/address" 2>/dev/null | sed 's/://g')
+        _sub=$(echo "$_raw" | sed 's/.*\(....\)$/\1/' | sed 'y/abcdef/ABCDEF/')
+        if [ -n "$_sub" ] && [ ${#_sub} -eq 4 ]; then
+            CAM_HOST="CleanCam-$_sub"
+            break
+        fi
+    fi
+done
+echo "$CAM_HOST" > /proc/sys/kernel/hostname 2>/dev/null
 
 # Kill any rogue Xiongmai wireless daemons
 killall -9 XmWlanDaemon XmWifiScan 2>/dev/null
@@ -58,7 +77,7 @@ parse_wifi_file() {
 
 import_sd_wifi() {
     _sd_file=""
-    for _candidate in /var/tmp/mmcblock0/wifi.txt /var/tmp/mmcblock0/WIFI.TXT /var/tmp/mmcblock0/Wifi.txt; do
+    for _candidate in /var/tmp/mmcblock0/wpa.conf /var/tmp/mmcblock0/wifi.txt /var/tmp/mmcblock0/WIFI.TXT /var/tmp/mmcblock0/Wifi.txt; do
         if [ -f "$_candidate" ]; then
             _sd_file="$_candidate"
             break
@@ -74,6 +93,19 @@ import_sd_wifi() {
         fi
     fi
 
+    # If direct wpa.conf on SD card, copy directly
+    case "$_sd_file" in
+        *wpa.conf)
+            mkdir -p /mnt/mtd/Config /mnt/mtd/Log 2>/dev/null
+            cp -f "$_sd_file" "$WIFI_CONF" 2>/dev/null
+            echo "ENABLE = 1" > /mnt/mtd/Config/WLan 2>/dev/null
+            echo "StartupType:0" > /mnt/mtd/Log/WifiStartupType 2>/dev/null
+            cp -f "$_sd_file" "$_last_file" 2>/dev/null
+            sync
+            return 0
+            ;;
+    esac
+
     if parse_wifi_file "$_sd_file"; then
         echo "[WiFi-Mgr] Auto-provisioning Wi-Fi from SD card ($_sd_file): SSID='$W_SSID'..."
         mkdir -p /mnt/mtd/Config /mnt/mtd/Log 2>/dev/null
@@ -86,8 +118,6 @@ ap_scan=1
 network={
 	ssid="$W_SSID"
 	key_mgmt=WPA-PSK
-	pairwise=CCMP TKIP
-	group=CCMP TKIP
 	psk="$W_PASS"
 }
 EOF
@@ -130,19 +160,27 @@ start_client_mode() {
     sleep 1
 
     ifconfig $IFACE 0.0.0.0 up 2>/dev/null
+    # Enforce maximum RF transmit power (20 dBm / 100mW)
+    iwconfig $IFACE txpower 20 2>/dev/null || iwconfig $IFACE txpower auto 2>/dev/null
+    command -v iwpriv >/dev/null 2>&1 && {
+        iwpriv $IFACE fwcmd set_txpower,63 2>/dev/null
+        iwpriv $IFACE fwcmd set_rate_txpower_mode,16 2>/dev/null
+    }
     killall -9 wpa_supplicant udhcpc 2>/dev/null
+    rm -rf /var/run/wpa_supplicant 2>/dev/null
     sleep 1
 
     echo "[WiFi-Mgr] Connecting to AP via wpa_supplicant..."
     wpa_supplicant -i $IFACE -c "$WIFI_CONF" -B 2>/dev/null
-    sleep 3
+    sleep 4
 
-    echo "[WiFi-Mgr] Requesting DHCP lease..."
-    udhcpc -i $IFACE -s "$DHCP_SCRIPT" -b -R 2>/dev/null &
+    echo "[WiFi-Mgr] Requesting DHCP lease with hostname $CAM_HOST..."
+    killall -9 udhcpc 2>/dev/null
+    udhcpc -i $IFACE -H "$CAM_HOST" -s "$DHCP_SCRIPT" -b >/dev/null 2>&1 &
 
     IP=""
-    for _try in 1 2 3 4 5 6 7 8; do
-        sleep 2
+    for _try in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        sleep 1
         IP=$(ifconfig $IFACE 2>/dev/null | grep 'inet addr' | grep -v '192.168.10.1' | awk -F: '{print $2}' | awk '{print $1}')
         [ -n "$IP" ] && break
     done
@@ -189,6 +227,11 @@ EOF
     sleep 1
     ifconfig $IFACE 192.168.10.1 netmask 255.255.255.0 up
     iwconfig $IFACE mode managed 2>/dev/null
+    iwconfig $IFACE txpower 20 2>/dev/null || iwconfig $IFACE txpower auto 2>/dev/null
+    command -v iwpriv >/dev/null 2>&1 && {
+        iwpriv $IFACE fwcmd set_txpower,63 2>/dev/null
+        iwpriv $IFACE fwcmd set_rate_txpower_mode,16 2>/dev/null
+    }
     sleep 1
 
     # Start hostapd & udhcpd
@@ -221,6 +264,7 @@ fi
 
 # Watchdog Loop
 FAIL_COUNT=0
+AP_TICKS=0
 while true; do
     sleep 15
 
@@ -229,24 +273,31 @@ while true; do
         echo "[WiFi-Mgr] New Wi-Fi configuration from SD card detected! Reconnecting..."
         start_client_mode
         FAIL_COUNT=0
+        AP_TICKS=0
         continue
     fi
 
-    # Ensure web and telnet servers are alive
-    if ! pidof xm_httpd >/dev/null 2>&1; then
-        if [ -x /mnt/custom/xm_httpd ]; then
-            /mnt/custom/xm_httpd 80 &
-            /mnt/custom/xm_httpd 8080 &
-        elif [ -x /var/tmp/xm_httpd ]; then
+    # Ensure web (ports 80 and 8080) and telnet servers are alive
+    LISTEN_PORTS=$(netstat -ltn 2>/dev/null)
+    if ! echo "$LISTEN_PORTS" | grep -q ':80 '; then
+        if [ -x /var/tmp/xm_httpd ]; then
             /var/tmp/xm_httpd 80 &
+        elif [ -x /mnt/custom/xm_httpd ]; then
+            /mnt/custom/xm_httpd 80 &
+        fi
+    fi
+    if ! echo "$LISTEN_PORTS" | grep -q ':8080 '; then
+        if [ -x /var/tmp/xm_httpd ]; then
             /var/tmp/xm_httpd 8080 &
+        elif [ -x /mnt/custom/xm_httpd ]; then
+            /mnt/custom/xm_httpd 8080 &
         fi
     fi
     if ! pidof xm_telnetd >/dev/null 2>&1; then
-        if [ -x /mnt/custom/xm_telnetd ]; then
-            /mnt/custom/xm_telnetd &
-        elif [ -x /var/tmp/xm_telnetd ]; then
+        if [ -x /var/tmp/xm_telnetd ]; then
             /var/tmp/xm_telnetd &
+        elif [ -x /mnt/custom/xm_telnetd ]; then
+            /mnt/custom/xm_telnetd &
         fi
     fi
 
@@ -255,21 +306,37 @@ while true; do
         rm -f "/var/tmp/wifi_trigger_connect"
         start_client_mode
         FAIL_COUNT=0
+        AP_TICKS=0
         continue
     fi
 
     # In Client Mode: only trigger fallback if no valid IP for > 2 minutes (8 * 15s)
     if [ -f "$WIFI_CONF" ] && grep -q 'ssid=' "$WIFI_CONF" && ! pidof hostapd >/dev/null 2>&1; then
+        AP_TICKS=0
         if ! has_valid_ip; then
             FAIL_COUNT=$((FAIL_COUNT + 1))
             echo "[WiFi-Mgr] Client IP lost ($FAIL_COUNT/8), retrying DHCP..."
-            udhcpc -i $IFACE -s "$DHCP_SCRIPT" -b -R 2>/dev/null &
+            if ! pidof wpa_supplicant >/dev/null 2>&1; then
+                wpa_supplicant -i $IFACE -c "$WIFI_CONF" -B 2>/dev/null
+            fi
+            if ! pidof udhcpc >/dev/null 2>&1; then
+                udhcpc -i $IFACE -H "$CAM_HOST" -s "$DHCP_SCRIPT" -b >/dev/null 2>&1 &
+            fi
             if [ $FAIL_COUNT -ge 8 ]; then
                 echo "[WiFi-Mgr] Client unreachable for 120s. Switching to Fallback AP..."
                 start_ap_mode
                 FAIL_COUNT=0
             fi
         else
+            FAIL_COUNT=0
+        fi
+    elif [ -f "$WIFI_CONF" ] && grep -q 'ssid=' "$WIFI_CONF" && pidof hostapd >/dev/null 2>&1; then
+        # Periodically retry client mode from AP mode every ~5 minutes (20 * 15s)
+        AP_TICKS=$((AP_TICKS + 1))
+        if [ $AP_TICKS -ge 20 ]; then
+            AP_TICKS=0
+            echo "[WiFi-Mgr] Retrying Wi-Fi Client Mode from Fallback AP..."
+            start_client_mode
             FAIL_COUNT=0
         fi
     fi

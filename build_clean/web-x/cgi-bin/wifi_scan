@@ -1,6 +1,29 @@
 #!/bin/sh
 export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/mnt/custom:/var/tmp:$PATH"
-echo "Content-Type: application/json"
+
+if [ -n "$REQUEST_METHOD" ]; then
+    if [ "$REQUEST_METHOD" = "OPTIONS" ]; then
+        echo "Access-Control-Allow-Origin: *"
+        echo "Access-Control-Allow-Methods: GET, POST, OPTIONS"
+        echo "Access-Control-Allow-Headers: Content-Type, Authorization"
+        echo "Connection: close"
+        echo ""
+        exit 0
+    fi
+    AUTH_BIN="/mnt/web/cgi-bin/auth"
+    [ ! -x "$AUTH_BIN" ] && AUTH_BIN="/var/tmp/auth"
+    if ! "$AUTH_BIN" --verify-admin >/dev/null 2>&1; then
+        echo "Status: 401 Unauthorized"
+        echo "Content-Type: application/json; charset=utf-8"
+        echo "Access-Control-Allow-Origin: *"
+        echo "Connection: close"
+        echo ""
+        echo '{"status": "error", "message": "Unauthorized"}'
+        exit 0
+    fi
+fi
+
+echo "Content-Type: application/json; charset=utf-8"
 echo "Access-Control-Allow-Origin: *"
 echo "Connection: close"
 echo ""
@@ -8,7 +31,11 @@ echo ""
 export LD_LIBRARY_PATH="/mnt/web/lib:/usr/local/lib:/usr/lib:$LD_LIBRARY_PATH"
 
 IFACE="eth2"
-[ -d "/sys/class/net/wlan0" ] && IFACE="wlan0"
+if [ -d "/sys/class/net/wlan0" ]; then
+    IFACE="wlan0"
+elif [ -d "/sys/class/net/ra0" ]; then
+    IFACE="ra0"
+fi
 
 # Make sure interface is up before scanning
 ifconfig $IFACE up 2>/dev/null
@@ -46,6 +73,8 @@ BEGIN {
     split($0, a, "\"")
     ssid = a[2]
     if (length(ssid) > 0) {
+        gsub(/\\/, "\\\\", ssid)
+        gsub(/"/, "\\\"", ssid)
         if (!first) print ","
         printf "  {\"ssid\": \"%s\", \"signal\": %d, \"security\": \"%s\"}", ssid, signal, enc
         first = 0

@@ -39,9 +39,11 @@ def compile_binaries(zig_path):
         print("[!] Zig компилятор не найден. Используются существующие предсобранные бинарники.")
         required_bins = [
             os.path.join(BUILD_DIR, "custom-x", "xm_rtspd"),
+            os.path.join(BUILD_DIR, "custom-x", "xm_httpd"),
             os.path.join(BUILD_DIR, "custom-x", "xm_resetd"),
             os.path.join(BUILD_DIR, "custom-x", "xm_snap"),
             os.path.join(BUILD_DIR, "custom-x", "xm_setcfg"),
+            os.path.join(BUILD_DIR, "custom-x", "xm_ha_osd"),
             os.path.join(BUILD_DIR, "web-x", "cgi-bin", "auth"),
         ]
         missing = [b for b in required_bins if not os.path.isfile(b)]
@@ -91,6 +93,12 @@ def compile_binaries(zig_path):
             "out": os.path.join(BUILD_DIR, "custom-x", "xm_ha_osd"),
             "extra_args": [],
             "name": "xm_ha_osd (Демон Home Assistant OSD)"
+        },
+        {
+            "src": os.path.join(SRC_DIR, "xm_httpd.c"),
+            "out": os.path.join(BUILD_DIR, "custom-x", "xm_httpd"),
+            "extra_args": [],
+            "name": "xm_httpd (Веб-сервер с поддержкой CGI POST и потокового ввода)"
         },
     ]
 
@@ -147,16 +155,30 @@ def package_dist():
     zip_path = os.path.join(DIST_DIR, "cleancam_sd_installer.zip")
     print(f"[*] Создание архива {zip_path}...")
     
+    import time
+    fw_id = f"cleancam_{int(time.time())}"
+    with open(os.path.join(SD_INSTALLER_DIR, ".cleancam_fw_id"), "w") as f_id:
+        f_id.write(fw_id)
+
     files_to_pack = [
         ("xm_autorun.sh", os.path.join(SD_INSTALLER_DIR, "xm_autorun.sh")),
         ("xm_flasher", os.path.join(SD_INSTALLER_DIR, "xm_flasher")),
         ("busybox", os.path.join(SD_INSTALLER_DIR, "busybox")),
         ("wifi.txt.example", os.path.join(SD_INSTALLER_DIR, "wifi.txt.example")),
+        (".cleancam_fw_id", os.path.join(SD_INSTALLER_DIR, ".cleancam_fw_id")),
         ("custom-x.squashfs", os.path.join(BUILD_DIR, "custom-x.squashfs")),
         ("web-x.squashfs", os.path.join(BUILD_DIR, "web-x.squashfs")),
     ]
     
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+    target_zip = zip_path
+    try:
+        zf = zipfile.ZipFile(target_zip, "w", zipfile.ZIP_DEFLATED)
+    except PermissionError:
+        target_zip = os.path.join(DIST_DIR, "cleancam_sd_installer_update.zip")
+        print(f"    [!] {zip_path} is locked by another process, saving to: {target_zip}")
+        zf = zipfile.ZipFile(target_zip, "w", zipfile.ZIP_DEFLATED)
+
+    with zf:
         for arcname, fpath in files_to_pack:
             if os.path.exists(fpath):
                 zf.write(fpath, arcname=arcname)
@@ -199,6 +221,15 @@ def package_dist():
         print("    + ИНСТРУКЦИЯ.txt")
 
     print(f"[+] Готово! Архив для MicroSD карты: {zip_path} ({os.path.getsize(zip_path)} байт)")
+
+    # Создание архива для WebUI обновления (.tar.gz)
+    import tarfile
+    tar_path = os.path.join(DIST_DIR, "cleancam_webui_update.tar.gz")
+    print(f"[*] Создание архива для обновления через WebUI: {tar_path}...")
+    with tarfile.open(tar_path, "w:gz") as tar:
+        tar.add(os.path.join(BUILD_DIR, "custom-x.squashfs"), arcname="custom-x.squashfs")
+        tar.add(os.path.join(BUILD_DIR, "web-x.squashfs"), arcname="web-x.squashfs")
+    print(f"[+] Готово! Архив для WebUI обновления: {tar_path} ({os.path.getsize(tar_path)} байт)")
     print("\n[+] Сборка CleanCam OS успешно завершена!")
 
 def main():

@@ -59,7 +59,7 @@ provision_wifi() {
     _target_conf="/mnt/mtd/Config/wpa.conf"
 
     _wifi_src=""
-    for _candidate in "$_sd_dir/wifi.txt" "$_sd_dir/WIFI.TXT" "$_sd_dir/Wifi.txt"; do
+    for _candidate in "$_sd_dir/wpa.conf" "$_sd_dir/wifi.txt" "$_sd_dir/WIFI.TXT" "$_sd_dir/Wifi.txt"; do
         if [ -f "$_candidate" ]; then
             _wifi_src="$_candidate"
             break
@@ -68,11 +68,25 @@ provision_wifi() {
 
     [ -z "$_wifi_src" ] && return 1
 
+    [ ! -d /mnt/mtd/Config ] && mount /dev/mtdblock5 /mnt/mtd 2>/dev/null
+    mkdir -p /mnt/mtd/Config /mnt/mtd/Log 2>/dev/null
+
+    case "$_wifi_src" in
+        *wpa.conf)
+            echo "[*] Direct wpa.conf found on SD, deploying..." >> $LOG_FILE
+            cp -f "$_wifi_src" "$_target_conf" 2>/dev/null
+            echo "ENABLE = 1" > /mnt/mtd/Config/WLan 2>/dev/null
+            echo "StartupType:0" > /mnt/mtd/Log/WifiStartupType 2>/dev/null
+            cp -f "$_wifi_src" /mnt/mtd/Config/.wifi_txt_last 2>/dev/null
+            $BB sync 2>/dev/null || sync
+            echo "[+] Saved Wi-Fi configuration to $_target_conf" >> $LOG_FILE
+            return 0
+            ;;
+    esac
+
     echo "[*] Found $_wifi_src on SD card, parsing..." >> $LOG_FILE
     if parse_wifi_txt "$_wifi_src"; then
         echo "[+] Wi-Fi credentials parsed: SSID='$W_SSID'" >> $LOG_FILE
-        [ ! -d /mnt/mtd/Config ] && mount /dev/mtdblock5 /mnt/mtd 2>/dev/null
-        mkdir -p /mnt/mtd/Config /mnt/mtd/Log 2>/dev/null
 
         if [ -n "$W_PASS" ]; then
             cat << EOF > "$_target_conf"
@@ -83,8 +97,6 @@ ap_scan=1
 network={
 	ssid="$W_SSID"
 	key_mgmt=WPA-PSK
-	pairwise=CCMP TKIP
-	group=CCMP TKIP
 	psk="$W_PASS"
 }
 EOF
@@ -192,13 +204,20 @@ EOF
 # Marker is stored in /mnt/mtd/.cleancam_done (on the CAMERA internal flash)
 # so the same SD card can be used to flash multiple cameras sequentially!
 [ ! -d /mnt/mtd/Config ] && mount /dev/mtdblock5 /mnt/mtd 2>/dev/null
+SD_FW_ID=$(cat "$SD_DIR/.cleancam_fw_id" 2>/dev/null)
+CAM_FW_ID=$(cat /mnt/mtd/.cleancam_fw_id 2>/dev/null)
+
 NEED_FLASH=0
-if [ ! -f "/mnt/mtd/.cleancam_done" ] || [ -f "$SD_DIR/force_flash" ]; then
+if [ -n "$SD_FW_ID" ] && [ "$SD_FW_ID" != "$CAM_FW_ID" ]; then
+    NEED_FLASH=1
+    echo "[!] New firmware build on SD detected ($SD_FW_ID != $CAM_FW_ID). Starting auto-flash..." >> $LOG_FILE
+elif [ ! -f "/mnt/mtd/.cleancam_done" ] || [ -f "$SD_DIR/force_flash" ]; then
     NEED_FLASH=1
     echo "[!] Partition update required for this camera (/mnt/mtd/.cleancam_done not found)." >> $LOG_FILE
 fi
 
 if [ "$NEED_FLASH" = "1" ]; then
+    ( while true; do echo 1 > /dev/watchdog 2>/dev/null; sleep 1; done ) &
     echo "[*] Terminating camera services to free partitions..." >> $LOG_FILE
     killall -9 App XmServices_Mgr XmWlanDaemon wifi_manager.sh httpd xm_httpd xm_telnetd xm_resetd 2>/dev/null
     sleep 1
@@ -232,7 +251,10 @@ if [ "$NEED_FLASH" = "1" ]; then
         provision_wifi "$SD_DIR"
         restore_default_accounts force
         touch "/mnt/mtd/.cleancam_done"
+        [ -n "$SD_FW_ID" ] && echo "$SD_FW_ID" > "/mnt/mtd/.cleancam_fw_id"
         rm -f "$SD_DIR/.clean_v3_done" "$SD_DIR/force_flash" 2>/dev/null
+        rm -f /mnt/mtd/Config/CloudDNS.conf /mnt/mtd/Config/CloudAvailDNS.conf /mnt/mtd/Config/RPS*.txt 2>/dev/null
+        touch /mnt/mtd/Config/CloudDNS.conf /mnt/mtd/Config/CloudAvailDNS.conf 2>/dev/null
         $BB sync 2>/dev/null || sync
         echo "[+] Flashing complete! Rebooting cleanly into new flash firmware..." >> $LOG_FILE
         sleep 1
