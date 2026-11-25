@@ -1,5 +1,28 @@
 #!/bin/sh
 export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/mnt/custom:/var/tmp:$PATH"
+
+if [ -n "$REQUEST_METHOD" ]; then
+    if [ "$REQUEST_METHOD" = "OPTIONS" ]; then
+        echo "Access-Control-Allow-Origin: *"
+        echo "Access-Control-Allow-Methods: GET, POST, OPTIONS"
+        echo "Access-Control-Allow-Headers: Content-Type, Authorization"
+        echo "Connection: close"
+        echo ""
+        exit 0
+    fi
+    AUTH_BIN="/mnt/web/cgi-bin/auth"
+    [ ! -x "$AUTH_BIN" ] && AUTH_BIN="/var/tmp/auth"
+    if ! "$AUTH_BIN" --verify-admin >/dev/null 2>&1; then
+        echo "Status: 401 Unauthorized"
+        echo "Content-Type: application/json; charset=utf-8"
+        echo "Access-Control-Allow-Origin: *"
+        echo "Connection: close"
+        echo ""
+        echo '{"status": "error", "message": "Unauthorized"}'
+        exit 0
+    fi
+fi
+
 echo "Content-Type: application/json"
 echo "Access-Control-Allow-Origin: *"
 echo "Connection: close"
@@ -86,6 +109,43 @@ if [ -e /proc/XmMotor ]; then
             exit 0
             ;;
     esac
+
+    # Adapt PTZ movement to Image Mirror/Flip and explicit PTZ axis inversion settings
+    MIRROR=0
+    FLIP=0
+    PTZ_H_INV=0
+    PTZ_V_INV=0
+    CFG_FILE="/mnt/mtd/Config/CameraSettings.json"
+    if [ -f "$CFG_FILE" ]; then
+        grep -qiE '"mirror"[[:space:]]*:[[:space:]]*(1|true)' "$CFG_FILE" 2>/dev/null && MIRROR=1
+        grep -qiE '"flip"[[:space:]]*:[[:space:]]*(1|true)' "$CFG_FILE" 2>/dev/null && FLIP=1
+        grep -qiE '"ptz_h_invert"[[:space:]]*:[[:space:]]*(1|true)' "$CFG_FILE" 2>/dev/null && PTZ_H_INV=1
+        grep -qiE '"ptz_v_invert"[[:space:]]*:[[:space:]]*(1|true)' "$CFG_FILE" 2>/dev/null && PTZ_V_INV=1
+    fi
+    EFF_H=$(( (MIRROR + PTZ_H_INV) % 2 ))
+    EFF_V=$(( (FLIP + PTZ_V_INV) % 2 ))
+
+    if [ "$EFF_H" = "1" ]; then
+        case "$DIR" in
+            DirectionLeft|Left|left) DIR="DirectionRight" ;;
+            DirectionRight|Right|right) DIR="DirectionLeft" ;;
+            DirectionUpLeft) DIR="DirectionUpRight" ;;
+            DirectionUpRight) DIR="DirectionUpLeft" ;;
+            DirectionDownLeft) DIR="DirectionDownRight" ;;
+            DirectionDownRight) DIR="DirectionDownLeft" ;;
+        esac
+    fi
+
+    if [ "$EFF_V" = "1" ]; then
+        case "$DIR" in
+            DirectionUp|Up|up) DIR="DirectionDown" ;;
+            DirectionDown|Down|down) DIR="DirectionUp" ;;
+            DirectionUpLeft) DIR="DirectionDownLeft" ;;
+            DirectionUpRight) DIR="DirectionDownRight" ;;
+            DirectionDownLeft) DIR="DirectionUpLeft" ;;
+            DirectionDownRight) DIR="DirectionUpRight" ;;
+        esac
+    fi
 
     # Read current step positions
     CURR_X=$(cat /proc/XmMotor | awk '/-------------- motor x/{f=1; next} /-------------- motor y/{f=0} f && /curr step/{print $4}')

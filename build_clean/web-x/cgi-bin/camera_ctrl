@@ -1,24 +1,63 @@
 #!/bin/sh
 export PATH="/bin:/sbin:/usr/bin:/usr/sbin:/mnt/custom:/var/tmp:$PATH"
+
+if [ -n "$REQUEST_METHOD" ]; then
+    if [ "$REQUEST_METHOD" = "OPTIONS" ]; then
+        echo "Access-Control-Allow-Origin: *"
+        echo "Access-Control-Allow-Methods: GET, POST, OPTIONS"
+        echo "Access-Control-Allow-Headers: Content-Type, Authorization"
+        echo "Connection: close"
+        echo ""
+        exit 0
+    fi
+    AUTH_BIN="/mnt/web/cgi-bin/auth"
+    [ ! -x "$AUTH_BIN" ] && AUTH_BIN="/var/tmp/auth"
+    if ! "$AUTH_BIN" --verify-admin >/dev/null 2>&1; then
+        echo "Status: 401 Unauthorized"
+        echo "Content-Type: application/json; charset=utf-8"
+        echo "Access-Control-Allow-Origin: *"
+        echo "Connection: close"
+        echo ""
+        echo '{"status": "error", "message": "Unauthorized"}'
+        exit 0
+    fi
+fi
+
 echo "Content-Type: application/json; charset=utf-8"
 echo "Access-Control-Allow-Origin: *"
 echo "Connection: close"
 echo ""
 
 DATA="$QUERY_STRING"
-if [ "$REQUEST_METHOD" = "POST" ] && [ -z "$DATA" ]; then
-    read -r -t 1 DATA 2>/dev/null
+if [ "$REQUEST_METHOD" = "POST" ]; then
+    POST_DATA=""
+    if [ -n "$CONTENT_LENGTH" ] && [ "$CONTENT_LENGTH" -gt 0 ] && [ "$CONTENT_LENGTH" -le 65536 ] 2>/dev/null; then
+        POST_DATA=$(head -c "$CONTENT_LENGTH")
+    else
+        read -r -t 1 POST_DATA 2>/dev/null
+    fi
+    if [ -n "$POST_DATA" ]; then
+        if [ -n "$DATA" ]; then
+            DATA="$DATA&$POST_DATA"
+        else
+            DATA="$POST_DATA"
+        fi
+    fi
 fi
 
 # URL decode helper
 urldecode() {
-    echo -e "$(echo "$1" | sed 's/+/ /g;s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')"
+    printf "%b" "$(printf '%s' "$1" | sed 's/+/ /g;s/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')"
 }
 
 get_param() {
-    VAL=$(echo "$DATA" | sed -n "s/.*[?&]$1=\([^&]*\).*/\1/p")
-    [ -z "$VAL" ] && VAL=$(echo "$DATA" | sed -n "s/^$1=\([^&]*\).*/\1/p")
+    VAL=$(printf '%s' "$DATA" | sed -n "s/.*[?&]$1=\([^&]*\).*/\1/p")
+    [ -z "$VAL" ] && VAL=$(printf '%s' "$DATA" | sed -n "s/^$1=\([^&]*\).*/\1/p")
     urldecode "$VAL"
+}
+
+sanitize_str() {
+    printf '%s' "$1" | awk 'BEGIN{ORS=""} { gsub(/[\r\n"\\`$]/, ""); printf "%s", $0 }'
 }
 
 CMD=$(get_param "cmd")
@@ -39,12 +78,12 @@ fi
 # -------------------------------------------------------------
 if [ "$CMD" = "set_time" ]; then
     TIME_STR=$(get_param "time")
-    if [ -n "$TIME_STR" ]; then
+    if echo "$TIME_STR" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$'; then
         date -s "$TIME_STR" >/dev/null 2>&1
         hwclock -w 2>/dev/null
         echo "{\"status\": \"ok\", \"message\": \"Время успешно синхронизировано: $(date)\"}"
     else
-        echo '{"status": "error", "message": "Не указано время"}'
+        echo '{"status": "error", "message": "Некорректный формат времени (ожидается YYYY-MM-DD HH:MM:SS)"}'
     fi
     exit 0
 fi
@@ -91,9 +130,17 @@ if [ "$CMD" = "get" ]; then
   "sub_resolution": "D1",
   "osd_time": true,
   "osd_time_pos": "TopRight",
+  "osd_time_x": 5800,
+  "osd_time_y": 512,
+  "osd_time_color": "0xF0FFFFFF",
   "osd_title": true,
   "osd_title_pos": "TopLeft",
+  "osd_title_x": 256,
+  "osd_title_y": 512,
+  "osd_title_color": "0xF0FFFFFF",
   "osd_name": "CleanCam",
+  "osd_wifi": false,
+  "font_size": 24,
   "audio_enable": true,
   "mic_volume": 80,
   "spk_volume": 80,
@@ -103,6 +150,11 @@ if [ "$CMD" = "get" ]; then
   "track_enable": false,
   "track_sensitivity": 1,
   "track_return_time": 60,
+  "track_h_invert": 1,
+  "track_v_invert": 0,
+  "track_mirror_adapt": 1,
+  "ptz_h_invert": 0,
+  "ptz_v_invert": 0,
   "device_name": "CleanCam-GK7201",
   "current_time": "$CURR_TIME"
 }
@@ -148,9 +200,17 @@ SUB_RESOLUTION=$(get_param "sub_resolution")
 
 OSD_TIME=$(get_param "osd_time")
 OSD_TIME_POS=$(get_param "osd_time_pos")
+OSD_TIME_X=$(get_param "osd_time_x")
+OSD_TIME_Y=$(get_param "osd_time_y")
+OSD_TIME_COLOR=$(get_param "osd_time_color")
 OSD_TITLE=$(get_param "osd_title")
 OSD_TITLE_POS=$(get_param "osd_title_pos")
+OSD_TITLE_X=$(get_param "osd_title_x")
+OSD_TITLE_Y=$(get_param "osd_title_y")
+OSD_TITLE_COLOR=$(get_param "osd_title_color")
 OSD_NAME=$(get_param "osd_name")
+OSD_WIFI=$(get_param "osd_wifi")
+FONT_SIZE=$(get_param "font_size")
 
 AUDIO_ENABLE=$(get_param "audio_enable")
 MIC_VOLUME=$(get_param "mic_volume")
@@ -162,8 +222,77 @@ MOTION_BEEP=$(get_param "motion_beep")
 TRACK_ENABLE=$(get_param "track_enable")
 TRACK_SENSITIVITY=$(get_param "track_sensitivity")
 TRACK_RETURN_TIME=$(get_param "track_return_time")
+TRACK_H_INVERT=$(get_param "track_h_invert")
+TRACK_V_INVERT=$(get_param "track_v_invert")
+TRACK_MIRROR_ADAPT=$(get_param "track_mirror_adapt")
+PTZ_H_INVERT=$(get_param "ptz_h_invert")
+PTZ_V_INVERT=$(get_param "ptz_v_invert")
 
 DEVICE_NAME=$(get_param "device_name")
+
+# Preserve existing saved values for any unpassed parameters before falling back to defaults
+read_cfg_val() {
+    [ -f "$CFG_FILE" ] || return
+    sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*//p" "$CFG_FILE" | head -n1 | sed 's/,[[:space:]]*$//; s/^"//; s/"$//'
+}
+
+[ -z "$BRIGHTNESS" ] && BRIGHTNESS=$(read_cfg_val "brightness")
+[ -z "$CONTRAST" ] && CONTRAST=$(read_cfg_val "contrast")
+[ -z "$SATURATION" ] && SATURATION=$(read_cfg_val "saturation")
+[ -z "$HUE" ] && HUE=$(read_cfg_val "hue")
+[ -z "$SHARPNESS" ] && SHARPNESS=$(read_cfg_val "sharpness")
+[ -z "$FLIP" ] && FLIP=$(read_cfg_val "flip")
+[ -z "$MIRROR" ] && MIRROR=$(read_cfg_val "mirror")
+[ -z "$ANTI_FLICKER" ] && ANTI_FLICKER=$(read_cfg_val "anti_flicker")
+[ -z "$WDR" ] && WDR=$(read_cfg_val "wdr")
+[ -z "$WDR_GAIN" ] && WDR_GAIN=$(read_cfg_val "wdr_gain")
+[ -z "$HLC" ] && HLC=$(read_cfg_val "hlc")
+[ -z "$STYLE" ] && STYLE=$(read_cfg_val "style")
+[ -z "$WHITE_BALANCE" ] && WHITE_BALANCE=$(read_cfg_val "white_balance")
+[ -z "$DAYNIGHT" ] && DAYNIGHT=$(read_cfg_val "daynight")
+[ -z "$DNC_THRESHOLD" ] && DNC_THRESHOLD=$(read_cfg_val "dnc_threshold")
+[ -z "$DENOISE" ] && DENOISE=$(read_cfg_val "denoise")
+[ -z "$WHITELIGHT_MODE" ] && WHITELIGHT_MODE=$(read_cfg_val "whitelight_mode")
+[ -z "$WHITELIGHT_BRIGHTNESS" ] && WHITELIGHT_BRIGHTNESS=$(read_cfg_val "whitelight_brightness")
+[ -z "$WHITELIGHT_DURATION" ] && WHITELIGHT_DURATION=$(read_cfg_val "whitelight_duration")
+[ -z "$FPS" ] && FPS=$(read_cfg_val "fps")
+[ -z "$BITRATE" ] && BITRATE=$(read_cfg_val "bitrate")
+[ -z "$COMPRESSION" ] && COMPRESSION=$(read_cfg_val "compression")
+[ -z "$BITRATE_CONTROL" ] && BITRATE_CONTROL=$(read_cfg_val "bitrate_control")
+[ -z "$QUALITY" ] && QUALITY=$(read_cfg_val "quality")
+[ -z "$GOP" ] && GOP=$(read_cfg_val "gop")
+[ -z "$SUB_ENABLE" ] && SUB_ENABLE=$(read_cfg_val "sub_enable")
+[ -z "$SUB_FPS" ] && SUB_FPS=$(read_cfg_val "sub_fps")
+[ -z "$SUB_BITRATE" ] && SUB_BITRATE=$(read_cfg_val "sub_bitrate")
+[ -z "$SUB_RESOLUTION" ] && SUB_RESOLUTION=$(read_cfg_val "sub_resolution")
+[ -z "$OSD_TIME" ] && OSD_TIME=$(read_cfg_val "osd_time")
+[ -z "$OSD_TIME_POS" ] && OSD_TIME_POS=$(read_cfg_val "osd_time_pos")
+[ -z "$OSD_TIME_X" ] && OSD_TIME_X=$(read_cfg_val "osd_time_x")
+[ -z "$OSD_TIME_Y" ] && OSD_TIME_Y=$(read_cfg_val "osd_time_y")
+[ -z "$OSD_TIME_COLOR" ] && OSD_TIME_COLOR=$(read_cfg_val "osd_time_color")
+[ -z "$OSD_TITLE" ] && OSD_TITLE=$(read_cfg_val "osd_title")
+[ -z "$OSD_TITLE_POS" ] && OSD_TITLE_POS=$(read_cfg_val "osd_title_pos")
+[ -z "$OSD_TITLE_X" ] && OSD_TITLE_X=$(read_cfg_val "osd_title_x")
+[ -z "$OSD_TITLE_Y" ] && OSD_TITLE_Y=$(read_cfg_val "osd_title_y")
+[ -z "$OSD_TITLE_COLOR" ] && OSD_TITLE_COLOR=$(read_cfg_val "osd_title_color")
+[ -z "$OSD_NAME" ] && OSD_NAME=$(read_cfg_val "osd_name")
+[ -z "$OSD_WIFI" ] && OSD_WIFI=$(read_cfg_val "osd_wifi")
+[ -z "$FONT_SIZE" ] && FONT_SIZE=$(read_cfg_val "font_size")
+[ -z "$TRACK_H_INVERT" ] && TRACK_H_INVERT=$(read_cfg_val "track_h_invert")
+[ -z "$TRACK_V_INVERT" ] && TRACK_V_INVERT=$(read_cfg_val "track_v_invert")
+[ -z "$TRACK_MIRROR_ADAPT" ] && TRACK_MIRROR_ADAPT=$(read_cfg_val "track_mirror_adapt")
+[ -z "$PTZ_H_INVERT" ] && PTZ_H_INVERT=$(read_cfg_val "ptz_h_invert")
+[ -z "$PTZ_V_INVERT" ] && PTZ_V_INVERT=$(read_cfg_val "ptz_v_invert")
+[ -z "$AUDIO_ENABLE" ] && AUDIO_ENABLE=$(read_cfg_val "audio_enable")
+[ -z "$MIC_VOLUME" ] && MIC_VOLUME=$(read_cfg_val "mic_volume")
+[ -z "$SPK_VOLUME" ] && SPK_VOLUME=$(read_cfg_val "spk_volume")
+[ -z "$MOTION_ENABLE" ] && MOTION_ENABLE=$(read_cfg_val "motion_enable")
+[ -z "$MOTION_SENSITIVITY" ] && MOTION_SENSITIVITY=$(read_cfg_val "motion_sensitivity")
+[ -z "$MOTION_BEEP" ] && MOTION_BEEP=$(read_cfg_val "motion_beep")
+[ -z "$TRACK_ENABLE" ] && TRACK_ENABLE=$(read_cfg_val "track_enable")
+[ -z "$TRACK_SENSITIVITY" ] && TRACK_SENSITIVITY=$(read_cfg_val "track_sensitivity")
+[ -z "$TRACK_RETURN_TIME" ] && TRACK_RETURN_TIME=$(read_cfg_val "track_return_time")
+[ -z "$DEVICE_NAME" ] && DEVICE_NAME=$(read_cfg_val "device_name")
 
 # Set sensible defaults for any unpassed values
 [ -z "$BRIGHTNESS" ] && BRIGHTNESS=50
@@ -200,9 +329,22 @@ DEVICE_NAME=$(get_param "device_name")
 
 [ -z "$OSD_TIME" ] && OSD_TIME="true"
 [ -z "$OSD_TIME_POS" ] && OSD_TIME_POS="TopRight"
+[ -z "$OSD_TIME_X" ] && OSD_TIME_X=5800
+[ -z "$OSD_TIME_Y" ] && OSD_TIME_Y=512
+[ -z "$OSD_TIME_COLOR" ] && OSD_TIME_COLOR="0xF0FFFFFF"
 [ -z "$OSD_TITLE" ] && OSD_TITLE="true"
 [ -z "$OSD_TITLE_POS" ] && OSD_TITLE_POS="TopLeft"
+[ -z "$OSD_TITLE_X" ] && OSD_TITLE_X=256
+[ -z "$OSD_TITLE_Y" ] && OSD_TITLE_Y=512
+[ -z "$OSD_TITLE_COLOR" ] && OSD_TITLE_COLOR="0xF0FFFFFF"
 [ -z "$OSD_NAME" ] && OSD_NAME="CleanCam"
+[ -z "$OSD_WIFI" ] && OSD_WIFI="false"
+[ -z "$FONT_SIZE" ] && FONT_SIZE=24
+[ -z "$TRACK_H_INVERT" ] && TRACK_H_INVERT=1
+[ -z "$TRACK_V_INVERT" ] && TRACK_V_INVERT=0
+[ -z "$TRACK_MIRROR_ADAPT" ] && TRACK_MIRROR_ADAPT=1
+[ -z "$PTZ_H_INVERT" ] && PTZ_H_INVERT=0
+[ -z "$PTZ_V_INVERT" ] && PTZ_V_INVERT=0
 
 [ -z "$AUDIO_ENABLE" ] && AUDIO_ENABLE="true"
 [ -z "$MIC_VOLUME" ] && MIC_VOLUME=80
@@ -216,6 +358,23 @@ DEVICE_NAME=$(get_param "device_name")
 [ -z "$TRACK_RETURN_TIME" ] && TRACK_RETURN_TIME=60
 
 [ -z "$DEVICE_NAME" ] && DEVICE_NAME="CleanCam-GK7201"
+
+# Sanitize string values against JSON/shell breaking chars
+OSD_NAME=$(sanitize_str "$OSD_NAME")
+DEVICE_NAME=$(sanitize_str "$DEVICE_NAME")
+STYLE=$(sanitize_str "$STYLE")
+ANTI_FLICKER=$(sanitize_str "$ANTI_FLICKER")
+WDR=$(sanitize_str "$WDR")
+WHITE_BALANCE=$(sanitize_str "$WHITE_BALANCE")
+DAYNIGHT=$(sanitize_str "$DAYNIGHT")
+WHITELIGHT_MODE=$(sanitize_str "$WHITELIGHT_MODE")
+COMPRESSION=$(sanitize_str "$COMPRESSION")
+BITRATE_CONTROL=$(sanitize_str "$BITRATE_CONTROL")
+SUB_RESOLUTION=$(sanitize_str "$SUB_RESOLUTION")
+OSD_TIME_POS=$(sanitize_str "$OSD_TIME_POS")
+OSD_TITLE_POS=$(sanitize_str "$OSD_TITLE_POS")
+OSD_TIME_COLOR=$(sanitize_str "$OSD_TIME_COLOR")
+OSD_TITLE_COLOR=$(sanitize_str "$OSD_TITLE_COLOR")
 
 # Save persistent configuration file
 CURR_TIME=$(date '+%Y-%m-%d %H:%M:%S')
@@ -252,9 +411,17 @@ cat << EOF > "$CFG_FILE"
   "sub_resolution": "$SUB_RESOLUTION",
   "osd_time": $OSD_TIME,
   "osd_time_pos": "$OSD_TIME_POS",
+  "osd_time_x": $OSD_TIME_X,
+  "osd_time_y": $OSD_TIME_Y,
+  "osd_time_color": "$OSD_TIME_COLOR",
   "osd_title": $OSD_TITLE,
   "osd_title_pos": "$OSD_TITLE_POS",
+  "osd_title_x": $OSD_TITLE_X,
+  "osd_title_y": $OSD_TITLE_Y,
+  "osd_title_color": "$OSD_TITLE_COLOR",
   "osd_name": "$OSD_NAME",
+  "osd_wifi": $OSD_WIFI,
+  "font_size": $FONT_SIZE,
   "audio_enable": $AUDIO_ENABLE,
   "mic_volume": $MIC_VOLUME,
   "spk_volume": $SPK_VOLUME,
@@ -264,6 +431,11 @@ cat << EOF > "$CFG_FILE"
   "track_enable": $TRACK_ENABLE,
   "track_sensitivity": $TRACK_SENSITIVITY,
   "track_return_time": $TRACK_RETURN_TIME,
+  "track_h_invert": $TRACK_H_INVERT,
+  "track_v_invert": $TRACK_V_INVERT,
+  "track_mirror_adapt": $TRACK_MIRROR_ADAPT,
+  "ptz_h_invert": $PTZ_H_INVERT,
+  "ptz_v_invert": $PTZ_V_INVERT,
   "device_name": "$DEVICE_NAME",
   "current_time": "$CURR_TIME"
 }
@@ -299,13 +471,25 @@ case "$ANTI_FLICKER" in
 esac
 
 DN_VAL="0x00000005"
-if [ "$DAYNIGHT" = "Color" ]; then
-    DN_VAL="0x00000001"
-    echo "ircut 0" > /proc/XmMotor 2>/dev/null
-elif [ "$DAYNIGHT" = "BW" ]; then
-    DN_VAL="0x00000002"
-    echo "ircut 1" > /proc/XmMotor 2>/dev/null
-fi
+case "$DAYNIGHT" in
+    "Color")
+        DN_VAL="0x00000001"
+        echo "ircut 0" > /proc/XmMotor 2>/dev/null
+        ;;
+    "BW")
+        DN_VAL="0x00000002"
+        echo "ircut 1" > /proc/XmMotor 2>/dev/null
+        ;;
+    "Infrared")
+        DN_VAL="0x00000003"
+        ;;
+    "Intelligent")
+        DN_VAL="0x00000004"
+        ;;
+    *)
+        DN_VAL="0x00000005"
+        ;;
+esac
 
 WB_HEX="0x00000001"
 [ "$WHITE_BALANCE" = "Manual" ] && WB_HEX="0x00000002"
@@ -321,7 +505,7 @@ CFG_BIN="/var/tmp/xm_setcfg"
 
 if [ -x "$CFG_BIN" ]; then
     # 1. Apply VideoColor
-    $CFG_BIN 1040 "{\"Name\":\"AVEnc.VideoColor\",\"AVEnc.VideoColor\":[[{\"Enable\":1,\"TimeSection\":\"1 00:00:00-24:00:00\",\"VideoColorParam\":{\"Acutance\":$ACUTANCE,\"Brightness\":$BRIGHTNESS,\"Contrast\":$CONTRAST,\"Gain\":0,\"Hue\":$HUE,\"Saturation\":$SATURATION,\"Whitebalance\":128}}]]}" >/dev/null 2>&1
+    $CFG_BIN 1040 "{\"Name\":\"AVEnc.VideoColor\",\"AVEnc.VideoColor\":[[{\"Enable\":1,\"TimeSection\":\"1 00:00:00-24:00:00\",\"VideoColorParam\":{\"Acutance\":$ACUTANCE,\"Brightness\":$BRIGHTNESS,\"Contrast\":$CONTRAST,\"Gain\":0,\"Hue\":$HUE,\"Saturation\":$SATURATION,\"Whitebalance\":128}},{\"Enable\":0,\"TimeSection\":\"0 00:00:00-00:00:00\",\"VideoColorParam\":{\"Acutance\":$ACUTANCE,\"Brightness\":$BRIGHTNESS,\"Contrast\":$CONTRAST,\"Gain\":0,\"Hue\":$HUE,\"Saturation\":$SATURATION,\"Whitebalance\":128}}]]}" >/dev/null 2>&1
 
     # 2. Apply Camera.Param (Flip, Mirror, DayNight, Denoise, AntiFlicker, Threshold)
     $CFG_BIN 1040 "{\"Name\":\"Camera.Param\",\"Camera.Param\":[{\"AeSensitivity\":5,\"ApertureMode\":\"0x00000001\",\"BLCMode\":\"0x00000001\",\"DayNightColor\":\"$DN_VAL\",\"Day_nfLevel\":$DENOISE,\"DncThr\":$DNC_THRESHOLD,\"ElecLevel\":50,\"EsShutter\":\"0x00000000\",\"ExposureParam\":{\"LeastTime\":\"0x00000100\",\"Level\":0,\"MostTime\":\"0x00010000\"},\"GainParam\":{\"AutoGain\":1,\"Gain\":50},\"IRCUTMode\":1,\"InfraredSwap\":0,\"IrcutSwap\":0,\"Night_nfLevel\":$DENOISE,\"PictureFlip\":\"$FLIP_HEX\",\"PictureMirror\":\"$MIRROR_HEX\",\"RejectFlicker\":\"$AF_HEX\",\"WhiteBalance\":\"$WB_HEX\"}]}" >/dev/null 2>&1
@@ -336,12 +520,20 @@ if [ -x "$CFG_BIN" ]; then
     SUB_VID_ENABLE="false"
     [ "$SUB_ENABLE" = "true" ] || [ "$SUB_ENABLE" = "1" ] && SUB_VID_ENABLE="true"
 
-    $CFG_BIN 1040 "{\"Name\":\"AVEnc.Encode\",\"AVEnc.Encode\":[{\"MainFormat\":[{\"AudioEnable\":$AUDIO_ENABLE,\"Video\":{\"BitRate\":$BITRATE,\"BitRateControl\":\"$BITRATE_CONTROL\",\"Compression\":\"$COMPRESSION\",\"FPS\":$FPS,\"GOP\":$GOP,\"Quality\":$QUALITY,\"Resolution\":\"1080P\"}}],\"ExtraFormat\":[{\"VideoEnable\":$SUB_VID_ENABLE,\"AudioEnable\":false,\"Video\":{\"BitRate\":$SUB_BITRATE,\"BitRateControl\":\"VBR\",\"Compression\":\"$COMPRESSION\",\"FPS\":$SUB_FPS,\"GOP\":$GOP,\"Resolution\":\"$SUB_RESOLUTION\"}}]}]}" >/dev/null 2>&1
+    $CFG_BIN 1040 "{\"Name\":\"Simplify.Encode.[0]\",\"Simplify.Encode.[0]\":{\"ExtraFormat\":{\"AudioEnable\":false,\"Video\":{\"BitRate\":$SUB_BITRATE,\"BitRateControl\":\"VBR\",\"Compression\":\"$COMPRESSION\",\"FPS\":$SUB_FPS,\"GOP\":$GOP,\"Quality\":3,\"Resolution\":\"$SUB_RESOLUTION\",\"VirtualGOP\":1},\"VideoEnable\":$SUB_VID_ENABLE},\"MainFormat\":{\"AudioEnable\":$AUDIO_ENABLE,\"Video\":{\"BitRate\":$BITRATE,\"BitRateControl\":\"$BITRATE_CONTROL\",\"Compression\":\"$COMPRESSION\",\"FPS\":$FPS,\"GOP\":$GOP,\"Quality\":$QUALITY,\"Resolution\":\"1080P\",\"VirtualGOP\":1},\"VideoEnable\":true}}}" >/dev/null 2>&1
 
-    # 6. Apply AVEnc.VideoWidget (OSD Time & Name with Coordinates)
-    TIME_COORDS=$(pos_to_coords "$OSD_TIME_POS")
-    TITLE_COORDS=$(pos_to_coords "$OSD_TITLE_POS")
-    $CFG_BIN 1040 "{\"Name\":\"AVEnc.VideoWidget\",\"AVEnc.VideoWidget\":[{\"ChannelTitle\":{\"Name\":\"$OSD_NAME\"},\"ChannelTitleAttribute\":{\"EncodeBlend\":$OSD_TITLE,\"RelativePos\":$TITLE_COORDS},\"TimeTitleAttribute\":{\"EncodeBlend\":$OSD_TIME,\"RelativePos\":$TIME_COORDS}}]}" >/dev/null 2>&1
+    # 6. Apply AVEnc.VideoWidget (OSD Time & Name with Coordinates & Colors)
+    if [ -n "$OSD_TIME_X" ] && [ -n "$OSD_TIME_Y" ] && [ "$OSD_TIME_X" -ge 0 ] 2>/dev/null; then
+        TIME_COORDS="[$OSD_TIME_X,$OSD_TIME_Y,255,24]"
+    else
+        TIME_COORDS=$(pos_to_coords "$OSD_TIME_POS")
+    fi
+    if [ -n "$OSD_TITLE_X" ] && [ -n "$OSD_TITLE_Y" ] && [ "$OSD_TITLE_X" -ge 0 ] 2>/dev/null; then
+        TITLE_COORDS="[$OSD_TITLE_X,$OSD_TITLE_Y,255,24]"
+    else
+        TITLE_COORDS=$(pos_to_coords "$OSD_TITLE_POS")
+    fi
+    $CFG_BIN 1040 "{\"Name\":\"AVEnc.VideoWidget\",\"AVEnc.VideoWidget\":[{\"ChannelTitle\":{\"Name\":\"$OSD_NAME\"},\"ChannelTitleAttribute\":{\"EncodeBlend\":$OSD_TITLE,\"FrontColor\":\"$OSD_TITLE_COLOR\",\"RelativePos\":$TITLE_COORDS},\"TimeTitleAttribute\":{\"EncodeBlend\":$OSD_TIME,\"FrontColor\":\"$OSD_TIME_COLOR\",\"RelativePos\":$TIME_COORDS}}]}" >/dev/null 2>&1
 
     # 7. Apply fVideo.Volume (Audio Volumes)
     $CFG_BIN 1040 "{\"Name\":\"fVideo.Volume\",\"fVideo.Volume\":[{\"LeftVolume\":$MIC_VOLUME,\"RightVolume\":$SPK_VOLUME}]}" >/dev/null 2>&1
@@ -352,10 +544,21 @@ if [ -x "$CFG_BIN" ]; then
     # 9. Apply Detect.DetectTrack
     $CFG_BIN 1040 "{\"Name\":\"Detect.DetectTrack\",\"Detect.DetectTrack\":{\"Enable\":$TRACK_ENABLE,\"Sensitivity\":$TRACK_SENSITIVITY,\"ReturnTime\":$TRACK_RETURN_TIME}}" >/dev/null 2>&1
 
-    # 10. Apply General.General (Device Name)
-    $CFG_BIN 1040 "{\"Name\":\"General.General\",\"General.General\":{\"MachineName\":\"$DEVICE_NAME\"}}" >/dev/null 2>&1
+    # Apply Auto-Tracking Direction (Invert & Mirroring)
+    EFF_H_INVERT=$TRACK_H_INVERT
+    EFF_V_INVERT=$TRACK_V_INVERT
+    if [ "$TRACK_MIRROR_ADAPT" = "1" ] || [ "$TRACK_MIRROR_ADAPT" = "true" ]; then
+        [ "$MIRROR" = "1" ] || [ "$MIRROR" = "true" ] && EFF_H_INVERT=$((1 - EFF_H_INVERT))
+        [ "$FLIP" = "1" ] || [ "$FLIP" = "true" ] && EFF_V_INVERT=$((1 - EFF_V_INVERT))
+    fi
+    $CFG_BIN 1040 "{\"Name\":\"Detect.DetectTrackDirection\",\"Detect.DetectTrackDirection\":{\"HorizontalInvert\":$EFF_H_INVERT,\"VerticalInvert\":$EFF_V_INVERT}}" >/dev/null 2>&1
+
+    # 10. Apply General.General (Device Name & Global OSD Font Size)
+    $CFG_BIN 1040 "{\"Name\":\"General.General\",\"General.General\":{\"MachineName\":\"$DEVICE_NAME\",\"FontSize\":$FONT_SIZE}}" >/dev/null 2>&1
 fi
 
+touch /var/tmp/ha_osd.reload 2>/dev/null
+killall -HUP xm_ha_osd 2>/dev/null
 sync &
 echo '{"status": "ok", "message": "Все параметры камеры успешно применены и сохранены во flash!"}'
 exit 0

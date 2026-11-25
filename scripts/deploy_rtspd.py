@@ -1,6 +1,6 @@
 import socket, time, os, sys, gzip
 
-RECV_BIN = r"C:\Users\sockm\.gemini\antigravity\brain\86a4e033-acb4-4ed9-a0a3-9cb07aeed087\scratch\recv_file"
+RECV_BIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recv_file")
 
 def ensure_recv_file(s_telnet):
     s_telnet.sendall(b"[ -x /var/tmp/recv_file ] && echo 'RF_OK' || echo 'RF_MISSING'\n")

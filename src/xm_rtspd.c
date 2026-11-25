@@ -18,7 +18,9 @@
 #include <net/if.h>
 #include <poll.h>
 #include <stdint.h>
+#include <ctype.h>
 #include <math.h>
+#include <time.h>
 
 #define RTSP_PORT 554
 #define DVRIP_PORT 34567
@@ -43,11 +45,35 @@ typedef struct {
     uint16_t client_rtp_port;
     uint16_t client_rtcp_port;
     int udp_rtp_fd;
+    int video_setup;            // track0 negotiated
+    int audio_setup;            // track1 negotiated
+    int video_channel;          // interleaved channel for video (default 0)
+    int audio_channel;          // interleaved channel for audio (default 2)
+    uint16_t client_audio_rtp_port;
+    uint16_t client_audio_rtcp_port;
+    int udp_audio_rtp_fd;
+    int authenticated;          // 1 = Client authenticated via RTSP Basic Auth
+    uint16_t video_rtp_seq;
+    uint16_t audio_rtp_seq;
     pthread_mutex_t send_lock;
 } client_t;
 
 static client_t clients[MAX_CLIENTS];
 static pthread_mutex_t clients_lock = PTHREAD_MUTEX_INITIALIZER;
+
+typedef struct {
+    uint16_t rtp_seq;
+    uint32_t rtp_timestamp;
+    uint32_t rtp_ssrc;
+    pthread_mutex_t lock;
+} audio_info_t;
+
+static audio_info_t g_audio = {
+    .rtp_seq = 100,
+    .rtp_timestamp = 1000,
+    .rtp_ssrc = 0x12345678,
+    .lock = PTHREAD_MUTEX_INITIALIZER
+};
 
 typedef enum {
     CODEC_H264 = 0,
@@ -67,6 +93,8 @@ typedef struct {
     size_t cached_sps_len;
     uint8_t cached_pps[512];
     size_t cached_pps_len;
+    struct timespec last_frame_ts;
+    int has_last_ts;
     pthread_mutex_t lock;
 } stream_info_t;
 
@@ -169,6 +197,31 @@ static void get_local_ip(char *out_ip, size_t max_len) {
     }
 }
 
+static void get_local_mac(char *out_mac, size_t max_len) {
+    const char *ifnames[] = {"eth2", "wlan0", "ra0", "eth0", NULL};
+    for (int i = 0; ifnames[i]; i++) {
+        char path[64];
+        snprintf(path, sizeof(path), "/sys/class/net/%s/address", ifnames[i]);
+        FILE *f = fopen(path, "r");
+        if (f) {
+            char buf[32] = {0};
+            if (fgets(buf, sizeof(buf), f)) {
+                char *nl = strpbrk(buf, "\r\n");
+                if (nl) *nl = '\0';
+                if (strlen(buf) >= 11 && strcmp(buf, "00:00:00:00:00:00") != 0) {
+                    strncpy(out_mac, buf, max_len - 1);
+                    out_mac[max_len - 1] = '\0';
+                    fclose(f);
+                    return;
+                }
+            }
+            fclose(f);
+        }
+    }
+    strncpy(out_mac, "00:12:34:56:78:9A", max_len - 1);
+    out_mac[max_len - 1] = '\0';
+}
+
 static void base64_encode(const uint8_t *data, size_t len, char *out) {
     static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     size_t i = 0, j = 0;
@@ -185,19 +238,226 @@ static void base64_encode(const uint8_t *data, size_t len, char *out) {
     out[j] = '\0';
 }
 
+static int b64_char_to_val(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+static int base64_decode(const char *in, char *out, size_t max_out) {
+    if (!in || !out || max_out == 0) return 0;
+    size_t in_len = strlen(in);
+    size_t out_idx = 0;
+    for (size_t i = 0; i < in_len; ) {
+        while (i < in_len && (in[i] == ' ' || in[i] == '\r' || in[i] == '\n' || in[i] == '\t')) i++;
+        if (i >= in_len) break;
+        int a = b64_char_to_val(in[i++]);
+        int b = (i < in_len) ? b64_char_to_val(in[i++]) : -1;
+        int c = (i < in_len) ? b64_char_to_val(in[i++]) : -1;
+        int d = (i < in_len) ? b64_char_to_val(in[i++]) : -1;
+        if (a < 0 || b < 0) break;
+        if (out_idx < max_out - 1) out[out_idx++] = (char)((a << 2) | (b >> 4));
+        if (c >= 0 && out_idx < max_out - 1) out[out_idx++] = (char)(((b & 0xF) << 4) | (c >> 2));
+        if (d >= 0 && out_idx < max_out - 1) out[out_idx++] = (char)(((c & 0x3) << 6) | d);
+    }
+    out[out_idx] = '\0';
+    return (int)out_idx;
+}
+
+typedef struct {
+    int enabled;
+    char username[64];
+    char password[64];
+    time_t last_check;
+} stream_auth_cfg_t;
+
+static stream_auth_cfg_t g_stream_auth = {0, "stream", "stream123", 0};
+static char g_admin_user[64] = "admin";
+static char g_admin_pass[64] = "admin";
+
+static void reload_auth_configs(void) {
+    time_t now = time(NULL);
+    if (now - g_stream_auth.last_check < 2 && access("/var/tmp/stream_auth.reload", F_OK) != 0) {
+        return;
+    }
+    unlink("/var/tmp/stream_auth.reload");
+    g_stream_auth.last_check = now;
+
+    // Load stream auth
+    FILE *f = fopen("/mnt/mtd/Config/stream_auth.json", "r");
+    if (f) {
+        char buf[1024] = {0};
+        fread(buf, 1, sizeof(buf) - 1, f);
+        fclose(f);
+
+        char *en = strstr(buf, "\"enabled\"");
+        if (en) {
+            char *col = strchr(en, ':');
+            if (col) {
+                while (*col == ':' || *col == ' ' || *col == '\t') col++;
+                if (*col == '1' || strncmp(col, "true", 4) == 0) g_stream_auth.enabled = 1;
+                else if (*col == '0' || strncmp(col, "false", 5) == 0) g_stream_auth.enabled = 0;
+            }
+        }
+
+        char *u = strstr(buf, "\"username\"");
+        if (u) {
+            char *col = strchr(u, ':');
+            if (col) {
+                char *q1 = strchr(col, '"');
+                if (q1) {
+                    char *q2 = strchr(q1 + 1, '"');
+                    if (q2) {
+                        size_t l = q2 - (q1 + 1);
+                        if (l >= sizeof(g_stream_auth.username)) l = sizeof(g_stream_auth.username) - 1;
+                        strncpy(g_stream_auth.username, q1 + 1, l);
+                        g_stream_auth.username[l] = '\0';
+                    }
+                }
+            }
+        }
+
+        char *p = strstr(buf, "\"password\"");
+        if (p) {
+            char *col = strchr(p, ':');
+            if (col) {
+                char *q1 = strchr(col, '"');
+                if (q1) {
+                    char *q2 = strchr(q1 + 1, '"');
+                    if (q2) {
+                        size_t l = q2 - (q1 + 1);
+                        if (l >= sizeof(g_stream_auth.password)) l = sizeof(g_stream_auth.password) - 1;
+                        strncpy(g_stream_auth.password, q1 + 1, l);
+                        g_stream_auth.password[l] = '\0';
+                    }
+                }
+            }
+        }
+    } else {
+        g_stream_auth.enabled = 0;
+    }
+
+    // Load admin credentials fallback
+    FILE *fa = fopen("/mnt/mtd/Config/web_auth.json", "r");
+    if (fa) {
+        char buf[1024] = {0};
+        fread(buf, 1, sizeof(buf) - 1, fa);
+        fclose(fa);
+
+        char *u = strstr(buf, "\"username\"");
+        if (u) {
+            char *col = strchr(u, ':');
+            if (col) {
+                char *q1 = strchr(col, '"');
+                if (q1) {
+                    char *q2 = strchr(q1 + 1, '"');
+                    if (q2) {
+                        size_t l = q2 - (q1 + 1);
+                        if (l >= sizeof(g_admin_user)) l = sizeof(g_admin_user) - 1;
+                        strncpy(g_admin_user, q1 + 1, l);
+                        g_admin_user[l] = '\0';
+                    }
+                }
+            }
+        }
+
+        char *p = strstr(buf, "\"password\"");
+        if (p) {
+            char *col = strchr(p, ':');
+            if (col) {
+                char *q1 = strchr(col, '"');
+                if (q1) {
+                    char *q2 = strchr(q1 + 1, '"');
+                    if (q2) {
+                        size_t l = q2 - (q1 + 1);
+                        if (l >= sizeof(g_admin_pass)) l = sizeof(g_admin_pass) - 1;
+                        strncpy(g_admin_pass, q1 + 1, l);
+                        g_admin_pass[l] = '\0';
+                    }
+                }
+            }
+        }
+    }
+}
+
+static int verify_rtsp_auth(const char *req, const char *uri) {
+    reload_auth_configs();
+    if (!g_stream_auth.enabled) return 1; // Auth not required
+
+    // 1. Check HTTP/RTSP "Authorization: Basic ..."
+    const char *auth_hdr = strcasestr(req, "Authorization: Basic ");
+    if (auth_hdr) {
+        const char *b64 = auth_hdr + 21;
+        while (*b64 == ' ') b64++;
+        char b64_tok[256] = {0};
+        size_t bi = 0;
+        while (*b64 && !isspace((unsigned char)*b64) && bi < sizeof(b64_tok) - 1) {
+            b64_tok[bi++] = *b64++;
+        }
+        b64_tok[bi] = '\0';
+
+        char decoded[256] = {0};
+        base64_decode(b64_tok, decoded, sizeof(decoded));
+        char *colon = strchr(decoded, ':');
+        if (colon) {
+            *colon = '\0';
+            const char *u = decoded;
+            const char *p = colon + 1;
+            if (strcmp(u, g_stream_auth.username) == 0 && strcmp(p, g_stream_auth.password) == 0) {
+                return 1;
+            }
+            if (strcmp(u, g_admin_user) == 0 && strcmp(p, g_admin_pass) == 0) {
+                return 1;
+            }
+        }
+    }
+
+    // 2. Check embedded credentials in URI: rtsp://user:pass@...
+    const char *at = strchr(uri, '@');
+    if (at) {
+        const char *proto = strstr(uri, "://");
+        const char *start = proto ? (proto + 3) : uri;
+        if (start < at) {
+            char creds[128] = {0};
+            size_t clen = at - start;
+            if (clen < sizeof(creds)) {
+                strncpy(creds, start, clen);
+                creds[clen] = '\0';
+                char *colon = strchr(creds, ':');
+                if (colon) {
+                    *colon = '\0';
+                    const char *u = creds;
+                    const char *p = colon + 1;
+                    if (strcmp(u, g_stream_auth.username) == 0 && strcmp(p, g_stream_auth.password) == 0) {
+                        return 1;
+                    }
+                    if (strcmp(u, g_admin_user) == 0 && strcmp(p, g_admin_pass) == 0) {
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+
+    return 0; // Not authenticated
+}
+
 static void send_rtp_packet_to_client(client_t *c, const uint8_t *rtp_pkt, size_t pkt_len) {
-    if (!c->in_use || !c->active || !c->is_playing || c->broken) return;
+    if (!c->in_use || !c->active || !c->is_playing || c->broken || !c->video_setup) return;
     if (pthread_mutex_trylock(&c->send_lock) != 0) {
         return; // Don't block video streaming thread if this client's send buffer/mutex is busy!
     }
-    if (!c->in_use || !c->active || !c->is_playing || c->broken) {
+    if (!c->in_use || !c->active || !c->is_playing || c->broken || !c->video_setup) {
         pthread_mutex_unlock(&c->send_lock);
         return;
     }
     if (c->rtp_interleaved) {
         uint8_t hdr[4];
         hdr[0] = '$';
-        hdr[1] = 0;
+        hdr[1] = (uint8_t)c->video_channel;
         hdr[2] = (pkt_len >> 8) & 0xFF;
         hdr[3] = pkt_len & 0xFF;
         struct iovec iov[2];
@@ -223,6 +483,94 @@ static void send_rtp_packet_to_client(client_t *c, const uint8_t *rtp_pkt, size_
     pthread_mutex_unlock(&c->send_lock);
 }
 
+static void send_rtp_audio_to_client(client_t *c, const uint8_t *rtp_pkt, size_t pkt_len) {
+    if (!c->in_use || !c->active || !c->is_playing || c->broken || !c->audio_setup || pkt_len < 12 || pkt_len > 12 + 1024) return;
+    if (pthread_mutex_trylock(&c->send_lock) != 0) {
+        return;
+    }
+    if (!c->in_use || !c->active || !c->is_playing || c->broken || !c->audio_setup) {
+        pthread_mutex_unlock(&c->send_lock);
+        return;
+    }
+    uint8_t client_pkt[12 + 1024];
+    memcpy(client_pkt, rtp_pkt, pkt_len);
+    uint16_t seq = __atomic_fetch_add(&c->audio_rtp_seq, 1, __ATOMIC_RELAXED);
+    client_pkt[2] = (seq >> 8) & 0xFF;
+    client_pkt[3] = seq & 0xFF;
+
+    if (c->rtp_interleaved) {
+        uint8_t hdr[4];
+        hdr[0] = '$';
+        hdr[1] = (uint8_t)c->audio_channel;
+        hdr[2] = (pkt_len >> 8) & 0xFF;
+        hdr[3] = pkt_len & 0xFF;
+        struct iovec iov[2];
+        iov[0].iov_base = hdr;
+        iov[0].iov_len = 4;
+        iov[1].iov_base = (void *)client_pkt;
+        iov[1].iov_len = pkt_len;
+        struct msghdr msg = {0};
+        msg.msg_iov = iov;
+        msg.msg_iovlen = 2;
+        if (sendmsg(c->fd, &msg, MSG_NOSIGNAL) < 0) {
+            c->broken = 1;
+            c->is_playing = 0;
+        }
+    } else if (c->client_audio_rtp_port > 0 && c->udp_audio_rtp_fd > 0) {
+        struct sockaddr_in sin;
+        memset(&sin, 0, sizeof(sin));
+        sin.sin_family = AF_INET;
+        sin.sin_port = htons(c->client_audio_rtp_port);
+        sin.sin_addr = c->addr.sin_addr;
+        sendto(c->udp_audio_rtp_fd, client_pkt, pkt_len, MSG_NOSIGNAL, (struct sockaddr *)&sin, sizeof(sin));
+    }
+    pthread_mutex_unlock(&c->send_lock);
+}
+
+static void broadcast_audio(const uint8_t *audio_data, size_t audio_len) {
+    if (!audio_data || audio_len == 0) return;
+
+    pthread_mutex_lock(&g_audio.lock);
+    g_audio.rtp_seq++;
+    uint16_t seq = g_audio.rtp_seq;
+    uint32_t ts = g_audio.rtp_timestamp;
+    g_audio.rtp_timestamp += (uint32_t)audio_len;
+    uint32_t ssrc = g_audio.rtp_ssrc;
+    pthread_mutex_unlock(&g_audio.lock);
+
+    uint8_t rtp_pkt[12 + 1024];
+    if (12 + audio_len > sizeof(rtp_pkt)) return;
+
+    rtp_pkt[0] = 0x80;
+    rtp_pkt[1] = 8; // PT 8 = PCMA (G.711 A-law)
+    rtp_pkt[2] = (seq >> 8) & 0xFF;
+    rtp_pkt[3] = seq & 0xFF;
+    rtp_pkt[4] = (ts >> 24) & 0xFF;
+    rtp_pkt[5] = (ts >> 16) & 0xFF;
+    rtp_pkt[6] = (ts >> 8) & 0xFF;
+    rtp_pkt[7] = ts & 0xFF;
+    rtp_pkt[8] = (ssrc >> 24) & 0xFF;
+    rtp_pkt[9] = (ssrc >> 16) & 0xFF;
+    rtp_pkt[10] = (ssrc >> 8) & 0xFF;
+    rtp_pkt[11] = ssrc & 0xFF;
+    memcpy(rtp_pkt + 12, audio_data, audio_len);
+
+    int active_slots[MAX_CLIENTS];
+    int n_active = 0;
+
+    pthread_mutex_lock(&clients_lock);
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i].in_use && clients[i].active && clients[i].is_playing && !clients[i].broken && clients[i].audio_setup) {
+            active_slots[n_active++] = i;
+        }
+    }
+    pthread_mutex_unlock(&clients_lock);
+
+    for (int i = 0; i < n_active; i++) {
+        send_rtp_audio_to_client(&clients[active_slots[i]], rtp_pkt, 12 + audio_len);
+    }
+}
+
 static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
     if (!c->in_use || !c->active || !c->is_playing || c->broken || len < 2) return;
     int sid = c->stream_id;
@@ -239,11 +587,10 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
         uint8_t nal_type = nal[0] & 0x1F;
         if (len <= MAX_PAYLOAD) {
             pthread_mutex_lock(&streams[sid].lock);
-            streams[sid].rtp_seq++;
-            uint16_t seq = streams[sid].rtp_seq;
             uint32_t ts = streams[sid].rtp_timestamp;
             uint32_t ssrc = streams[sid].rtp_ssrc;
             pthread_mutex_unlock(&streams[sid].lock);
+            uint16_t seq = __atomic_fetch_add(&c->video_rtp_seq, 1, __ATOMIC_RELAXED);
 
             int marker = (nal_type == 1 || nal_type == 5) ? 1 : 0;
             pkt_buf[0] = 0x80;
@@ -277,11 +624,10 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
                 int marker = (is_end && (nal_type == 1 || nal_type == 5)) ? 1 : 0;
 
                 pthread_mutex_lock(&streams[sid].lock);
-                streams[sid].rtp_seq++;
-                uint16_t seq = streams[sid].rtp_seq;
                 uint32_t ts = streams[sid].rtp_timestamp;
                 uint32_t ssrc = streams[sid].rtp_ssrc;
                 pthread_mutex_unlock(&streams[sid].lock);
+                uint16_t seq = __atomic_fetch_add(&c->video_rtp_seq, 1, __ATOMIC_RELAXED);
 
                 pkt_buf[0] = 0x80;
                 pkt_buf[1] = (marker << 7) | 96;
@@ -300,7 +646,7 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
                 pkt_buf[13] = fu_hdr;
                 memcpy(pkt_buf + 14, payload + offset, chunk_len);
                 send_rtp_packet_to_client(c, pkt_buf, 14 + chunk_len);
-                if (!c->rtp_interleaved) usleep(100);
+                if (!c->rtp_interleaved) usleep(20);
                 offset += chunk_len;
             }
         }
@@ -311,11 +657,10 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
 
         if (len <= MAX_PAYLOAD) {
             pthread_mutex_lock(&streams[sid].lock);
-            streams[sid].rtp_seq++;
-            uint16_t seq = streams[sid].rtp_seq;
             uint32_t ts = streams[sid].rtp_timestamp;
             uint32_t ssrc = streams[sid].rtp_ssrc;
             pthread_mutex_unlock(&streams[sid].lock);
+            uint16_t seq = __atomic_fetch_add(&c->video_rtp_seq, 1, __ATOMIC_RELAXED);
 
             int marker = (nal_type == 1 || nal_type == 19 || nal_type == 20) ? 1 : 0;
             pkt_buf[0] = 0x80;
@@ -355,11 +700,10 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
                 int marker = (is_end && (nal_type == 1 || nal_type == 19 || nal_type == 20)) ? 1 : 0;
 
                 pthread_mutex_lock(&streams[sid].lock);
-                streams[sid].rtp_seq++;
-                uint16_t seq = streams[sid].rtp_seq;
                 uint32_t ts = streams[sid].rtp_timestamp;
                 uint32_t ssrc = streams[sid].rtp_ssrc;
                 pthread_mutex_unlock(&streams[sid].lock);
+                uint16_t seq = __atomic_fetch_add(&c->video_rtp_seq, 1, __ATOMIC_RELAXED);
 
                 pkt_buf[0] = 0x80;
                 pkt_buf[1] = (marker << 7) | 96;
@@ -379,7 +723,7 @@ static void send_nal_to_client(client_t *c, const uint8_t *nal, size_t len) {
                 pkt_buf[14] = fu_hdr;
                 memcpy(pkt_buf + 15, payload + offset, chunk_len);
                 send_rtp_packet_to_client(c, pkt_buf, 15 + chunk_len);
-                if (!c->rtp_interleaved) usleep(100);
+                if (!c->rtp_interleaved) usleep(20);
                 offset += chunk_len;
             }
         }
@@ -492,8 +836,20 @@ static void send_parameter_sets_to_client(client_t *c) {
 }
 
 static void process_video_frame(int sid, const uint8_t *data, size_t len) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
     pthread_mutex_lock(&streams[sid].lock);
-    streams[sid].rtp_timestamp += 7500;
+    if (streams[sid].has_last_ts) {
+        long long delta_us = (long long)(now.tv_sec - streams[sid].last_frame_ts.tv_sec) * 1000000LL +
+                             (long long)(now.tv_nsec - streams[sid].last_frame_ts.tv_nsec) / 1000LL;
+        if (delta_us < 1000) delta_us = 1000;
+        if (delta_us > 500000) delta_us = 83333; // fallback 12fps on long stall
+        streams[sid].rtp_timestamp += (uint32_t)((delta_us * 90LL) / 1000LL);
+    } else {
+        streams[sid].has_last_ts = 1;
+        streams[sid].rtp_timestamp += 7500;
+    }
+    streams[sid].last_frame_ts = now;
     pthread_mutex_unlock(&streams[sid].lock);
 
     size_t pos = 0;
@@ -617,8 +973,9 @@ static void *dvrip_stream_thread(void *arg) {
 
         if (recv_all(s_cmd, hdr, 20) < 0) { close(s_cmd); sleep(2); continue; }
         uint32_t resp_len = *(uint32_t *)(hdr + 16);
+        if (resp_len == 0 || resp_len > 65536) { close(s_cmd); sleep(2); continue; }
         char *resp_buf = malloc(resp_len + 1);
-        if (recv_all(s_cmd, (uint8_t *)resp_buf, resp_len) < 0) { free(resp_buf); close(s_cmd); sleep(2); continue; }
+        if (!resp_buf || recv_all(s_cmd, (uint8_t *)resp_buf, resp_len) < 0) { free(resp_buf); close(s_cmd); sleep(2); continue; }
         resp_buf[resp_len] = '\0';
 
         char *sess_str = strstr(resp_buf, "\"SessionID\"");
@@ -634,9 +991,16 @@ static void *dvrip_stream_thread(void *arg) {
             }
         }
         free(resp_buf);
+        if (session_id == 0) {
+            printf("[DVRIP-%s] Login failed (SessionID=0), retrying...\n", stype);
+            close(s_cmd);
+            sleep(2);
+            continue;
+        }
         printf("[DVRIP-%s] Logged in! Session: 0x%08X\n", stype, session_id);
 
         int s_data = socket(AF_INET, SOCK_STREAM, 0);
+        if (s_data < 0) { close(s_cmd); sleep(2); continue; }
         struct timeval tv_data = { .tv_sec = 10, .tv_usec = 0 };
         setsockopt(s_data, SOL_SOCKET, SO_RCVTIMEO, &tv_data, sizeof(tv_data));
         setsockopt(s_data, SOL_SOCKET, SO_SNDTIMEO, &tv_data, sizeof(tv_data));
@@ -662,9 +1026,12 @@ static void *dvrip_stream_thread(void *arg) {
 
         if (recv_all(s_data, hdr, 20) < 0) { close(s_cmd); close(s_data); sleep(2); continue; }
         uint32_t cl_len = *(uint32_t *)(hdr + 16);
-        uint8_t *cl_buf = malloc(cl_len);
-        recv_all(s_data, cl_buf, cl_len);
-        free(cl_buf);
+        if (cl_len > 65536) { close(s_cmd); close(s_data); sleep(2); continue; }
+        if (cl_len > 0) {
+            uint8_t *cl_buf = malloc(cl_len);
+            if (!cl_buf || recv_all(s_data, cl_buf, cl_len) < 0) { free(cl_buf); close(s_cmd); close(s_data); sleep(2); continue; }
+            free(cl_buf);
+        }
 
         char start_json[256];
         snprintf(start_json, sizeof(start_json),
@@ -681,9 +1048,12 @@ static void *dvrip_stream_thread(void *arg) {
 
         if (recv_all(s_cmd, hdr, 20) < 0) { close(s_cmd); close(s_data); sleep(2); continue; }
         uint32_t st_len = *(uint32_t *)(hdr + 16);
-        uint8_t *st_buf = malloc(st_len);
-        recv_all(s_cmd, st_buf, st_len);
-        free(st_buf);
+        if (st_len > 65536) { close(s_cmd); close(s_data); sleep(2); continue; }
+        if (st_len > 0) {
+            uint8_t *st_buf = malloc(st_len);
+            if (!st_buf || recv_all(s_cmd, st_buf, st_len) < 0) { free(st_buf); close(s_cmd); close(s_data); sleep(2); continue; }
+            free(st_buf);
+        }
 
         printf("[DVRIP-%s] Active and streaming!\n", stype);
 
@@ -692,6 +1062,11 @@ static void *dvrip_stream_thread(void *arg) {
         pthread_create(&ka_tid, NULL, keepalive_thread, &ka_arg);
 
         uint8_t *ring = malloc(BUFFER_SIZE);
+        if (!ring) {
+            ka_arg.running = 0;
+            pthread_join(ka_tid, NULL);
+            close(s_data); close(s_cmd); sleep(2); continue;
+        }
         size_t ring_len = 0;
 
         while (dvrip_running) {
@@ -757,6 +1132,8 @@ static void *dvrip_stream_thread(void *arg) {
 
                 if (pType == 0xFC || pType == 0xFE || pType == 0xFD) {
                     process_video_frame(sid, ring + offset + payload_offset, frame_total - payload_offset);
+                } else if (pType == 0xFA || pType == 0xF9) {
+                    broadcast_audio(ring + offset + payload_offset, frame_total - payload_offset);
                 }
 
                 offset += frame_total;
@@ -797,6 +1174,7 @@ static void *rtsp_client_thread(void *arg) {
     while (c->active && !c->broken) {
         memset(req, 0, sizeof(req));
         size_t total = 0;
+        int got_interleaved = 0;
         while (total < sizeof(req) - 1) {
             ssize_t n = recv(cfd, req + total, 1, 0);
             if (n < 0) {
@@ -810,10 +1188,24 @@ static void *rtsp_client_thread(void *arg) {
             } else if (n == 0) {
                 goto client_done;
             }
+            if (total == 0 && (uint8_t)req[0] == '$') {
+                uint8_t ihdr[3];
+                if (recv_all(cfd, ihdr, 3) < 0) goto client_done;
+                uint16_t ilen = ((uint16_t)ihdr[1] << 8) | ihdr[2];
+                uint8_t drain[512];
+                size_t rem = ilen;
+                while (rem > 0) {
+                    size_t chunk = rem > sizeof(drain) ? sizeof(drain) : rem;
+                    if (recv_all(cfd, drain, chunk) < 0) goto client_done;
+                    rem -= chunk;
+                }
+                got_interleaved = 1;
+                break;
+            }
             total += n;
             if (total >= 4 && memcmp(req + total - 4, "\r\n\r\n", 4) == 0) break;
         }
-        if (total == 0) continue;
+        if (got_interleaved || total == 0) continue;
 
         req[total] = '\0';
 
@@ -827,11 +1219,11 @@ static void *rtsp_client_thread(void *arg) {
         }
 
         // Detect requested stream:
-        // /live/ch1, /stream1, /sub, /track1, /extra1 -> Stream 1 (Sub)
-        // Otherwise -> Stream 0 (Main)
-        if (strstr(uri, "ch1") || strstr(uri, "stream1") || strstr(uri, "sub") || strstr(uri, "track1") || strstr(uri, "extra1") || strstr(uri, "substream")) {
+        // /live/ch1, /stream1, /sub, /extra1 -> Stream 1 (Sub)
+        // /live/ch0, /stream0, /main -> Stream 0 (Main)
+        if (strstr(uri, "/ch1") || strstr(uri, "stream1") || strstr(uri, "/sub") || strstr(uri, "extra1") || strstr(uri, "substream")) {
             c->stream_id = 1;
-        } else if (strstr(uri, "ch0") || strstr(uri, "stream0") || strstr(uri, "main") || strstr(uri, "track0")) {
+        } else if (strstr(uri, "/ch0") || strstr(uri, "stream0") || strstr(uri, "/main")) {
             c->stream_id = 0;
         }
 
@@ -847,7 +1239,27 @@ static void *rtsp_client_thread(void *arg) {
             pthread_mutex_lock(&c->send_lock);
             if (send(cfd, resp, strlen(resp), MSG_NOSIGNAL) < 0) c->broken = 1;
             pthread_mutex_unlock(&c->send_lock);
-        } else if (strcmp(method, "DESCRIBE") == 0) {
+        } else {
+            // Require authentication for DESCRIBE, SETUP, PLAY, etc.
+            if (!c->authenticated) {
+                if (verify_rtsp_auth(req, uri)) {
+                    c->authenticated = 1;
+                    printf("[RTSP] Client %s authenticated successfully!\n", client_ip);
+                } else {
+                    printf("[RTSP] Auth required/failed for client %s (%s)\n", client_ip, method);
+                    snprintf(resp, sizeof(resp),
+                             "RTSP/1.0 401 Unauthorized\r\n"
+                             "CSeq: %d\r\n"
+                             "WWW-Authenticate: Basic realm=\"CleanCam\"\r\n\r\n",
+                             cseq);
+                    pthread_mutex_lock(&c->send_lock);
+                    if (send(cfd, resp, strlen(resp), MSG_NOSIGNAL) < 0) c->broken = 1;
+                    pthread_mutex_unlock(&c->send_lock);
+                    continue;
+                }
+            }
+
+            if (strcmp(method, "DESCRIBE") == 0) {
             char vps_b64[256] = {0}, sps_b64[256] = {0}, pps_b64[256] = {0};
             video_codec_t codec;
             char profile_lvl[16] = "4d0029";
@@ -881,7 +1293,12 @@ static void *rtsp_client_thread(void *arg) {
                                    "b=AS:%d\r\n"
                                    "a=rtpmap:96 H264/90000\r\n"
                                    "a=fmtp:96 packetization-mode=1;profile-level-id=%s;sprop-parameter-sets=%s,%s\r\n"
-                                   "a=control:track0\r\n",
+                                   "a=control:track0\r\n"
+                                   "m=audio 0 RTP/AVP 8\r\n"
+                                   "c=IN IP4 0.0.0.0\r\n"
+                                   "b=AS:64\r\n"
+                                   "a=rtpmap:8 PCMA/8000/1\r\n"
+                                   "a=control:track1\r\n",
                                    stream_label, as_bw, profile_lvl, sps_b64, pps_b64);
             } else {
                 const char *stream_label = (sid == 1) ? "CleanCam H265 Sub (D1)" : "CleanCam H265 Main (1080P)";
@@ -895,7 +1312,12 @@ static void *rtsp_client_thread(void *arg) {
                                    "b=AS:%d\r\n"
                                    "a=rtpmap:96 H265/90000\r\n"
                                    "a=fmtp:96 sprop-vps=%s;sprop-sps=%s;sprop-pps=%s\r\n"
-                                   "a=control:track0\r\n",
+                                   "a=control:track0\r\n"
+                                   "m=audio 0 RTP/AVP 8\r\n"
+                                   "c=IN IP4 0.0.0.0\r\n"
+                                   "b=AS:64\r\n"
+                                   "a=rtpmap:8 PCMA/8000/1\r\n"
+                                   "a=control:track1\r\n",
                                    stream_label, as_bw, vps_b64, sps_b64, pps_b64);
             }
 
@@ -914,71 +1336,122 @@ static void *rtsp_client_thread(void *arg) {
             char *trans_hdr = strcasestr(req, "Transport:");
             int is_tcp = (trans_hdr && (strcasestr(trans_hdr, "TCP") || strcasestr(trans_hdr, "interleaved")));
             char *cp = trans_hdr ? strcasestr(trans_hdr, "client_port=") : NULL;
+            int is_audio = (strstr(uri, "track1") != NULL);
 
             if (is_tcp || !cp) {
                 c->rtp_interleaved = 1;
+                int inter_ch = is_audio ? 2 : 0;
+                char *il_pos = trans_hdr ? strcasestr(trans_hdr, "interleaved=") : NULL;
+                if (il_pos) {
+                    inter_ch = atoi(il_pos + 12);
+                }
+                if (is_audio) {
+                    c->audio_setup = 1;
+                    c->audio_channel = inter_ch;
+                } else {
+                    c->video_setup = 1;
+                    c->video_channel = inter_ch;
+                }
                 snprintf(resp, sizeof(resp),
                          "RTSP/1.0 200 OK\r\n"
                          "CSeq: %d\r\n"
-                         "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n"
+                         "Transport: RTP/AVP/TCP;unicast;interleaved=%d-%d\r\n"
                          "Session: %08X\r\n\r\n",
-                         cseq, c->session_id);
+                         cseq, inter_ch, inter_ch + 1, c->session_id);
             } else {
                 int rtp_p = 0, rtcp_p = 0;
                 sscanf(cp + 12, "%d-%d", &rtp_p, &rtcp_p);
                 if (rtcp_p == 0) rtcp_p = rtp_p + 1;
 
                 c->rtp_interleaved = 0;
-                c->client_rtp_port = rtp_p;
-                c->client_rtcp_port = rtcp_p;
+                int srv_port = 0;
 
-                if (c->udp_rtp_fd <= 0) {
-                    c->udp_rtp_fd = socket(AF_INET, SOCK_DGRAM, 0);
-                    int sndbuf = 256 * 1024;
-                    setsockopt(c->udp_rtp_fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
-                    int srv_port = 6970 + client_idx * 2;
-                    struct sockaddr_in srv_udp;
-                    memset(&srv_udp, 0, sizeof(srv_udp));
-                    srv_udp.sin_family = AF_INET;
-                    srv_udp.sin_port = htons(srv_port);
-                    srv_udp.sin_addr.s_addr = INADDR_ANY;
-                    if (bind(c->udp_rtp_fd, (struct sockaddr *)&srv_udp, sizeof(srv_udp)) < 0) {
-                        srv_udp.sin_port = 0;
-                        bind(c->udp_rtp_fd, (struct sockaddr *)&srv_udp, sizeof(srv_udp));
-                        socklen_t slen = sizeof(srv_udp);
-                        getsockname(c->udp_rtp_fd, (struct sockaddr *)&srv_udp, &slen);
-                        srv_port = ntohs(srv_udp.sin_port);
+                if (is_audio) {
+                    c->audio_setup = 1;
+                    c->client_audio_rtp_port = rtp_p;
+                    c->client_audio_rtcp_port = rtcp_p;
+                    if (c->udp_audio_rtp_fd <= 0) {
+                        c->udp_audio_rtp_fd = socket(AF_INET, SOCK_DGRAM, 0);
+                        int sndbuf = 128 * 1024;
+                        setsockopt(c->udp_audio_rtp_fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+                        srv_port = 6972 + client_idx * 4;
+                        struct sockaddr_in srv_udp;
+                        memset(&srv_udp, 0, sizeof(srv_udp));
+                        srv_udp.sin_family = AF_INET;
+                        srv_udp.sin_port = htons(srv_port);
+                        srv_udp.sin_addr.s_addr = INADDR_ANY;
+                        if (bind(c->udp_audio_rtp_fd, (struct sockaddr *)&srv_udp, sizeof(srv_udp)) < 0) {
+                            srv_udp.sin_port = 0;
+                            bind(c->udp_audio_rtp_fd, (struct sockaddr *)&srv_udp, sizeof(srv_udp));
+                            socklen_t slen = sizeof(srv_udp);
+                            getsockname(c->udp_audio_rtp_fd, (struct sockaddr *)&srv_udp, &slen);
+                            srv_port = ntohs(srv_udp.sin_port);
+                        }
+                    } else {
+                        srv_port = 6972 + client_idx * 4;
                     }
-                    snprintf(resp, sizeof(resp),
-                             "RTSP/1.0 200 OK\r\n"
-                             "CSeq: %d\r\n"
-                             "Transport: RTP/AVP;unicast;client_port=%d-%d;server_port=%d-%d\r\n"
-                             "Session: %08X\r\n\r\n",
-                             cseq, rtp_p, rtcp_p, srv_port, srv_port + 1, c->session_id);
                 } else {
-                    snprintf(resp, sizeof(resp),
-                             "RTSP/1.0 200 OK\r\n"
-                             "CSeq: %d\r\n"
-                             "Transport: RTP/AVP;unicast;client_port=%d-%d;server_port=6970-6971\r\n"
-                             "Session: %08X\r\n\r\n",
-                             cseq, rtp_p, rtcp_p, c->session_id);
+                    c->video_setup = 1;
+                    c->client_rtp_port = rtp_p;
+                    c->client_rtcp_port = rtcp_p;
+                    if (c->udp_rtp_fd <= 0) {
+                        c->udp_rtp_fd = socket(AF_INET, SOCK_DGRAM, 0);
+                        int sndbuf = 256 * 1024;
+                        setsockopt(c->udp_rtp_fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+                        srv_port = 6970 + client_idx * 4;
+                        struct sockaddr_in srv_udp;
+                        memset(&srv_udp, 0, sizeof(srv_udp));
+                        srv_udp.sin_family = AF_INET;
+                        srv_udp.sin_port = htons(srv_port);
+                        srv_udp.sin_addr.s_addr = INADDR_ANY;
+                        if (bind(c->udp_rtp_fd, (struct sockaddr *)&srv_udp, sizeof(srv_udp)) < 0) {
+                            srv_udp.sin_port = 0;
+                            bind(c->udp_rtp_fd, (struct sockaddr *)&srv_udp, sizeof(srv_udp));
+                            socklen_t slen = sizeof(srv_udp);
+                            getsockname(c->udp_rtp_fd, (struct sockaddr *)&srv_udp, &slen);
+                            srv_port = ntohs(srv_udp.sin_port);
+                        }
+                    } else {
+                        srv_port = 6970 + client_idx * 4;
+                    }
                 }
+
+                snprintf(resp, sizeof(resp),
+                         "RTSP/1.0 200 OK\r\n"
+                         "CSeq: %d\r\n"
+                         "Transport: RTP/AVP;unicast;client_port=%d-%d;server_port=%d-%d\r\n"
+                         "Session: %08X\r\n\r\n",
+                         cseq, rtp_p, rtcp_p, srv_port, srv_port + 1, c->session_id);
             }
             pthread_mutex_lock(&c->send_lock);
             if (send(cfd, resp, strlen(resp), MSG_NOSIGNAL) < 0) c->broken = 1;
             pthread_mutex_unlock(&c->send_lock);
         } else if (strcmp(method, "PLAY") == 0) {
             pthread_mutex_lock(&streams[sid].lock);
-            uint16_t cur_seq = streams[sid].rtp_seq;
             uint32_t cur_ts = streams[sid].rtp_timestamp;
             pthread_mutex_unlock(&streams[sid].lock);
+            uint16_t cur_seq = __atomic_load_n(&c->video_rtp_seq, __ATOMIC_RELAXED);
 
-            snprintf(resp, sizeof(resp),
-                     "RTSP/1.0 200 OK\r\n"
-                     "CSeq: %d\r\n"
-                     "Session: %08X\r\n"
-                     "RTP-Info: url=%s/track0;seq=%u;rtptime=%u\r\n\r\n",
-                     cseq, c->session_id, uri, cur_seq, cur_ts);
+            pthread_mutex_lock(&g_audio.lock);
+            uint32_t cur_ats = g_audio.rtp_timestamp;
+            pthread_mutex_unlock(&g_audio.lock);
+            uint16_t cur_aseq = __atomic_load_n(&c->audio_rtp_seq, __ATOMIC_RELAXED);
+
+            if (c->audio_setup) {
+                snprintf(resp, sizeof(resp),
+                         "RTSP/1.0 200 OK\r\n"
+                         "CSeq: %d\r\n"
+                         "Session: %08X\r\n"
+                         "RTP-Info: url=%s/track0;seq=%u;rtptime=%u,url=%s/track1;seq=%u;rtptime=%u\r\n\r\n",
+                         cseq, c->session_id, uri, cur_seq, cur_ts, uri, cur_aseq, cur_ats);
+            } else {
+                snprintf(resp, sizeof(resp),
+                         "RTSP/1.0 200 OK\r\n"
+                         "CSeq: %d\r\n"
+                         "Session: %08X\r\n"
+                         "RTP-Info: url=%s/track0;seq=%u;rtptime=%u\r\n\r\n",
+                         cseq, c->session_id, uri, cur_seq, cur_ts);
+            }
             pthread_mutex_lock(&c->send_lock);
             if (send(cfd, resp, strlen(resp), MSG_NOSIGNAL) < 0) c->broken = 1;
             pthread_mutex_unlock(&c->send_lock);
@@ -1006,6 +1479,7 @@ static void *rtsp_client_thread(void *arg) {
             if (send(cfd, resp, strlen(resp), MSG_NOSIGNAL) < 0) c->broken = 1;
             pthread_mutex_unlock(&c->send_lock);
         }
+        } // End of if (method == OPTIONS) ... else ...
     }
 
 client_done:
@@ -1013,11 +1487,18 @@ client_done:
     pthread_mutex_lock(&c->send_lock);
     c->active = 0;
     c->is_playing = 0;
+    c->authenticated = 0;
     c->broken = 1;
     if (c->udp_rtp_fd > 0) {
         close(c->udp_rtp_fd);
         c->udp_rtp_fd = 0;
     }
+    if (c->udp_audio_rtp_fd > 0) {
+        close(c->udp_audio_rtp_fd);
+        c->udp_audio_rtp_fd = 0;
+    }
+    c->video_setup = 0;
+    c->audio_setup = 0;
     if (c->fd >= 0) {
         close(c->fd);
         c->fd = -1;
@@ -1095,13 +1576,49 @@ static void ptz_set_pos(int new_x, int new_y) {
     printf("[PTZ] Position set: (%d, %d)\n", new_x, new_y);
 }
 
+static int parse_cam_cfg_flag(const char *buf, const char *key) {
+    char pat[64];
+    snprintf(pat, sizeof(pat), "\"%s\"", key);
+    const char *p = strstr(buf, pat);
+    if (!p) return 0;
+    const char *col = strchr(p + strlen(pat), ':');
+    if (!col) return 0;
+    col++;
+    while (*col == ' ' || *col == '\t') col++;
+    if (*col == '1' || strncasecmp(col, "true", 4) == 0) return 1;
+    return 0;
+}
+
+static void ptz_get_invert(int *inv_x, int *inv_y) {
+    int mirror = 0, flip = 0, ptz_h = 0, ptz_v = 0;
+    FILE *f = fopen("/mnt/mtd/Config/CameraSettings.json", "r");
+    if (f) {
+        char buf[4096];
+        size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+        buf[n] = '\0';
+        fclose(f);
+        mirror = parse_cam_cfg_flag(buf, "mirror");
+        flip = parse_cam_cfg_flag(buf, "flip");
+        ptz_h = parse_cam_cfg_flag(buf, "ptz_h_invert");
+        ptz_v = parse_cam_cfg_flag(buf, "ptz_v_invert");
+    }
+    if (inv_x) *inv_x = (mirror ^ ptz_h);
+    if (inv_y) *inv_y = (flip ^ ptz_v);
+}
+
 static void ptz_move(int pan, int tilt, int step_amount) {
+    int inv_x = 0, inv_y = 0;
+    ptz_get_invert(&inv_x, &inv_y);
+    if (inv_x) pan = -pan;
+    if (inv_y) tilt = -tilt;
+
     int cx = 1975, cy = 718;
     ptz_get_pos(&cx, &cy);
     int new_x = cx + pan * step_amount;
     int new_y = cy + tilt * step_amount;
     ptz_set_pos(new_x, new_y);
-    printf("[PTZ] Moved: pan=%d tilt=%d step=%d -> (%d, %d)\n", pan, tilt, step_amount, new_x, new_y);
+    printf("[PTZ] Moved: pan=%d tilt=%d step=%d (inv=%d,%d) -> (%d, %d)\n",
+           pan, tilt, step_amount, inv_x, inv_y, new_x, new_y);
 }
 
 static int get_coord_attr(const char *buf, char coord, float *out_val) {
@@ -1122,6 +1639,144 @@ static int get_coord_attr(const char *buf, char coord, float *out_val) {
             }
         }
         p++;
+    }
+    return 0;
+}
+
+typedef struct {
+    uint32_t state[5];
+    uint32_t count[2];
+    uint8_t buffer[64];
+} sha1_ctx_t;
+
+#define SHA1_ROL(v, b) (((v) << (b)) | ((v) >> (32 - (b))))
+static void sha1_transform(uint32_t state[5], const uint8_t buffer[64]) {
+    uint32_t a, b, c, d, e, w[80];
+    for (int i = 0; i < 16; i++) {
+        w[i] = ((uint32_t)buffer[i*4] << 24) | ((uint32_t)buffer[i*4+1] << 16) |
+               ((uint32_t)buffer[i*4+2] << 8) | buffer[i*4+3];
+    }
+    for (int i = 16; i < 80; i++) {
+        uint32_t t = w[i-3] ^ w[i-8] ^ w[i-14] ^ w[i-16];
+        w[i] = SHA1_ROL(t, 1);
+    }
+    a = state[0]; b = state[1]; c = state[2]; d = state[3]; e = state[4];
+    for (int i = 0; i < 80; i++) {
+        uint32_t f, k;
+        if (i < 20) { f = (b & c) | ((~b) & d); k = 0x5A827999; }
+        else if (i < 40) { f = b ^ c ^ d; k = 0x6ED9EBA1; }
+        else if (i < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8F1BBCDC; }
+        else { f = b ^ c ^ d; k = 0xCA62C1D6; }
+        uint32_t temp = SHA1_ROL(a, 5) + f + e + k + w[i];
+        e = d; d = c; c = SHA1_ROL(b, 30); b = a; a = temp;
+    }
+    state[0] += a; state[1] += b; state[2] += c; state[3] += d; state[4] += e;
+}
+
+static void sha1_calc(const uint8_t *data, size_t len, uint8_t digest[20]) {
+    sha1_ctx_t ctx = { .state = {0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0}, .count = {0, 0} };
+    uint8_t pad[128] = {0};
+    size_t i = 0;
+    while (len - i >= 64) {
+        sha1_transform(ctx.state, data + i);
+        i += 64;
+    }
+    size_t rem = len - i;
+    memcpy(pad, data + i, rem);
+    pad[rem] = 0x80;
+    size_t total_bits = len * 8;
+    size_t pad_len = (rem < 56) ? 64 : 128;
+    for (int b = 0; b < 8; b++) {
+        pad[pad_len - 1 - b] = (uint8_t)((total_bits >> (b * 8)) & 0xFF);
+    }
+    for (size_t off = 0; off < pad_len; off += 64) sha1_transform(ctx.state, pad + off);
+    for (int k = 0; k < 5; k++) {
+        digest[k*4] = (ctx.state[k] >> 24) & 0xFF;
+        digest[k*4+1] = (ctx.state[k] >> 16) & 0xFF;
+        digest[k*4+2] = (ctx.state[k] >> 8) & 0xFF;
+        digest[k*4+3] = ctx.state[k] & 0xFF;
+    }
+}
+
+static int extract_xml_tag_val(const char *xml, const char *tag_suffix, char *out, size_t max_len) {
+    char pat[64];
+    snprintf(pat, sizeof(pat), "%s", tag_suffix);
+    const char *p = xml;
+    while ((p = strcasestr(p, pat)) != NULL) {
+        if (p > xml && (p[-1] == '<' || p[-1] == ':')) {
+            const char *gt = strchr(p, '>');
+            if (gt && gt > p && gt[-1] != '/') {
+                gt++;
+                const char *lt = strchr(gt, '<');
+                if (lt) {
+                    size_t l = (size_t)(lt - gt);
+                    if (l >= max_len) l = max_len - 1;
+                    memcpy(out, gt, l);
+                    out[l] = '\0';
+                    return 1;
+                }
+            }
+        }
+        p++;
+    }
+    return 0;
+}
+
+static int check_wsse_password(const char *xml, const char *nonce_b64, const char *created, const char *pass_val, const char *candidate_pass) {
+    if (!pass_val || !candidate_pass) return 0;
+    if (strcmp(pass_val, candidate_pass) == 0) return 1;
+    if (!nonce_b64[0] || !created[0]) return 0;
+
+    // Decode nonce base64
+    uint8_t nonce_raw[128] = {0};
+    size_t in_len = strlen(nonce_b64), n_len = 0;
+    for (size_t i = 0; i < in_len; ) {
+        while (i < in_len && isspace((unsigned char)nonce_b64[i])) i++;
+        if (i >= in_len) break;
+        int a = b64_char_to_val(nonce_b64[i++]);
+        int b = (i < in_len) ? b64_char_to_val(nonce_b64[i++]) : -1;
+        int c = (i < in_len) ? b64_char_to_val(nonce_b64[i++]) : -1;
+        int d = (i < in_len) ? b64_char_to_val(nonce_b64[i++]) : -1;
+        if (a < 0 || b < 0) break;
+        if (n_len < sizeof(nonce_raw)) nonce_raw[n_len++] = (uint8_t)((a << 2) | (b >> 4));
+        if (c >= 0 && n_len < sizeof(nonce_raw)) nonce_raw[n_len++] = (uint8_t)(((b & 0xF) << 4) | (c >> 2));
+        if (d >= 0 && n_len < sizeof(nonce_raw)) nonce_raw[n_len++] = (uint8_t)(((c & 0x3) << 6) | d);
+    }
+
+    uint8_t concat[512];
+    size_t clen = 0;
+    if (n_len + strlen(created) + strlen(candidate_pass) >= sizeof(concat)) return 0;
+    memcpy(concat + clen, nonce_raw, n_len); clen += n_len;
+    memcpy(concat + clen, created, strlen(created)); clen += strlen(created);
+    memcpy(concat + clen, candidate_pass, strlen(candidate_pass)); clen += strlen(candidate_pass);
+
+    uint8_t sha[20];
+    sha1_calc(concat, clen, sha);
+    char expected_b64[64];
+    base64_encode(sha, 20, expected_b64);
+    (void)xml;
+    return (strcmp(pass_val, expected_b64) == 0);
+}
+
+static int verify_onvif_auth(const char *req) {
+    reload_auth_configs();
+    if (!g_stream_auth.enabled) return 1;
+
+    // 1. Check HTTP Authorization: Basic ...
+    if (verify_rtsp_auth(req, "") == 1) return 1;
+
+    // 2. Check WS-Security UsernameToken in SOAP XML
+    char u[64] = {0}, p[128] = {0}, nonce[128] = {0}, created[64] = {0};
+    if (extract_xml_tag_val(req, "Username", u, sizeof(u)) &&
+        extract_xml_tag_val(req, "Password", p, sizeof(p))) {
+        extract_xml_tag_val(req, "Nonce", nonce, sizeof(nonce));
+        extract_xml_tag_val(req, "Created", created, sizeof(created));
+        if (strcmp(u, g_stream_auth.username) == 0 && check_wsse_password(req, nonce, created, p, g_stream_auth.password)) {
+            return 1;
+        }
+        if (strcmp(u, g_admin_user) == 0 && check_wsse_password(req, nonce, created, p, g_admin_pass)) {
+            return 1;
+        }
     }
     return 0;
 }
@@ -1170,10 +1825,11 @@ static void *onvif_thread(void *arg) {
                 if (content_len < 0) {
                     char *cl = strcasestr(buf, "Content-Length:");
                     if (cl) content_len = atoi(cl + 15);
-                    else content_len = 0;
+                    else content_len = -2;
                 }
-                int body_len = total - (hdr_end + 4 - buf);
-                if (body_len >= content_len) break;
+                int body_len = (int)(total - (hdr_end + 4 - buf));
+                if (content_len >= 0 && body_len >= content_len) break;
+                if (content_len == -2 && strstr(hdr_end + 4, "Envelope>")) break;
             }
         }
         if (total <= 0) { close(cfd); continue; }
@@ -1213,6 +1869,25 @@ static void *onvif_thread(void *arg) {
         }
         printf("[ONVIF] %s -> %s\n", host_ip, action_name);
 
+        // Require authentication on sensitive ONVIF endpoints when stream_auth is enabled
+        int needs_auth = (strstr(buf, "GetStreamUri") || strstr(buf, "GetSnapshotUri") ||
+                          strstr(buf, "ContinuousMove") || strstr(buf, "RelativeMove") ||
+                          strstr(buf, "AbsoluteMove") || strstr(buf, "GotoPreset") ||
+                          strstr(buf, "SetPreset") || strstr(buf, "Stop"));
+        if (needs_auth && !verify_onvif_auth(buf)) {
+            const char *unauth = "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"CleanCam\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            send(cfd, unauth, strlen(unauth), MSG_NOSIGNAL);
+            close(cfd);
+            continue;
+        }
+
+        pthread_mutex_lock(&streams[0].lock);
+        const char *enc0 = (streams[0].codec == CODEC_H265) ? "H265" : "H264";
+        pthread_mutex_unlock(&streams[0].lock);
+        pthread_mutex_lock(&streams[1].lock);
+        const char *enc1 = (streams[1].codec == CODEC_H265) ? "H265" : "H264";
+        pthread_mutex_unlock(&streams[1].lock);
+
         if (strstr(buf, "GetDeviceInformation")) {
             snprintf(resp_body, sizeof(resp_body),
                 "%s<tds:GetDeviceInformationResponse>"
@@ -1225,7 +1900,8 @@ static void *onvif_thread(void *arg) {
                 hdr, ftr);
         } else if (strstr(buf, "GetSystemDateAndTime")) {
             time_t now = time(NULL);
-            struct tm *tm_utc = gmtime(&now);
+            struct tm tm_buf;
+            struct tm *tm_utc = gmtime_r(&now, &tm_buf);
             snprintf(resp_body, sizeof(resp_body),
                 "%s<tds:GetSystemDateAndTimeResponse>"
                 "<tds:SystemDateAndTime>"
@@ -1297,7 +1973,7 @@ static void *onvif_thread(void *arg) {
                 "</tt:VideoSourceConfiguration>"
                 "<tt:VideoEncoderConfiguration token=\"VEC_0\">"
                 "<tt:Name>VideoEncoderConfig_0</tt:Name><tt:UseCount>1</tt:UseCount>"
-                "<tt:Encoding>H264</tt:Encoding>"
+                "<tt:Encoding>%s</tt:Encoding>"
                 "<tt:Resolution><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:Resolution>"
                 "<tt:Quality>5.0</tt:Quality>"
                 "<tt:RateControl><tt:FrameRateLimit>12</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval><tt:BitrateLimit>2048</tt:BitrateLimit></tt:RateControl>"
@@ -1327,7 +2003,7 @@ static void *onvif_thread(void *arg) {
                 "</tt:VideoSourceConfiguration>"
                 "<tt:VideoEncoderConfiguration token=\"VEC_1\">"
                 "<tt:Name>VideoEncoderConfig_1</tt:Name><tt:UseCount>1</tt:UseCount>"
-                "<tt:Encoding>H264</tt:Encoding>"
+                "<tt:Encoding>%s</tt:Encoding>"
                 "<tt:Resolution><tt:Width>800</tt:Width><tt:Height>448</tt:Height></tt:Resolution>"
                 "<tt:Quality>5.0</tt:Quality>"
                 "<tt:RateControl><tt:FrameRateLimit>12</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval><tt:BitrateLimit>1024</tt:BitrateLimit></tt:RateControl>"
@@ -1349,7 +2025,7 @@ static void *onvif_thread(void *arg) {
                 "</tt:PTZConfiguration>"
                 "</trt:Profiles>"
                 "</trt:GetProfilesResponse>%s",
-                hdr, ftr);
+                hdr, enc0, enc1, ftr);
         } else if (strstr(buf, "GetProfile")) {
             int req_sub = (strstr(buf, "Profile_1") != NULL || strcasestr(buf, "sub") != NULL);
             if (req_sub) {
@@ -1364,7 +2040,7 @@ static void *onvif_thread(void *arg) {
                     "</tt:VideoSourceConfiguration>"
                     "<tt:VideoEncoderConfiguration token=\"VEC_1\">"
                     "<tt:Name>VideoEncoderConfig_1</tt:Name><tt:UseCount>1</tt:UseCount>"
-                    "<tt:Encoding>H264</tt:Encoding>"
+                    "<tt:Encoding>%s</tt:Encoding>"
                     "<tt:Resolution><tt:Width>800</tt:Width><tt:Height>448</tt:Height></tt:Resolution>"
                     "<tt:Quality>5.0</tt:Quality>"
                     "<tt:RateControl><tt:FrameRateLimit>12</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval><tt:BitrateLimit>1024</tt:BitrateLimit></tt:RateControl>"
@@ -1386,7 +2062,7 @@ static void *onvif_thread(void *arg) {
                     "</tt:PTZConfiguration>"
                     "</trt:Profile>"
                     "</trt:GetProfileResponse>%s",
-                    hdr, ftr);
+                    hdr, enc1, ftr);
             } else {
                 snprintf(resp_body, sizeof(resp_body),
                     "%s<trt:GetProfileResponse>"
@@ -1399,7 +2075,7 @@ static void *onvif_thread(void *arg) {
                     "</tt:VideoSourceConfiguration>"
                     "<tt:VideoEncoderConfiguration token=\"VEC_0\">"
                     "<tt:Name>VideoEncoderConfig_0</tt:Name><tt:UseCount>1</tt:UseCount>"
-                    "<tt:Encoding>H264</tt:Encoding>"
+                    "<tt:Encoding>%s</tt:Encoding>"
                     "<tt:Resolution><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:Resolution>"
                     "<tt:Quality>5.0</tt:Quality>"
                     "<tt:RateControl><tt:FrameRateLimit>12</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval><tt:BitrateLimit>2048</tt:BitrateLimit></tt:RateControl>"
@@ -1421,7 +2097,7 @@ static void *onvif_thread(void *arg) {
                     "</tt:PTZConfiguration>"
                     "</trt:Profile>"
                     "</trt:GetProfileResponse>%s",
-                    hdr, ftr);
+                    hdr, enc0, ftr);
             }
         } else if (strstr(buf, "GetStreamUri")) {
             int req_sub = (strstr(buf, "Profile_1") != NULL || strcasestr(buf, "sub") != NULL || strstr(buf, "ch1") != NULL || strstr(buf, "stream1") != NULL);
@@ -1478,7 +2154,7 @@ static void *onvif_thread(void *arg) {
                 "%s<trt:GetVideoEncoderConfigurationsResponse>"
                 "<trt:Configurations token=\"VEC_0\">"
                 "<tt:Name>VideoEncoderConfig_0</tt:Name><tt:UseCount>1</tt:UseCount>"
-                "<tt:Encoding>H264</tt:Encoding>"
+                "<tt:Encoding>%s</tt:Encoding>"
                 "<tt:Resolution><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:Resolution>"
                 "<tt:Quality>5.0</tt:Quality>"
                 "<tt:RateControl><tt:FrameRateLimit>12</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval><tt:BitrateLimit>2048</tt:BitrateLimit></tt:RateControl>"
@@ -1487,7 +2163,7 @@ static void *onvif_thread(void *arg) {
                 "</trt:Configurations>"
                 "<trt:Configurations token=\"VEC_1\">"
                 "<tt:Name>VideoEncoderConfig_1</tt:Name><tt:UseCount>1</tt:UseCount>"
-                "<tt:Encoding>H264</tt:Encoding>"
+                "<tt:Encoding>%s</tt:Encoding>"
                 "<tt:Resolution><tt:Width>800</tt:Width><tt:Height>448</tt:Height></tt:Resolution>"
                 "<tt:Quality>5.0</tt:Quality>"
                 "<tt:RateControl><tt:FrameRateLimit>12</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval><tt:BitrateLimit>1024</tt:BitrateLimit></tt:RateControl>"
@@ -1495,7 +2171,7 @@ static void *onvif_thread(void *arg) {
                 "<tt:SessionTimeout>PT60S</tt:SessionTimeout>"
                 "</trt:Configurations>"
                 "</trt:GetVideoEncoderConfigurationsResponse>%s",
-                hdr, ftr);
+                hdr, enc0, enc1, ftr);
         } else if (strstr(buf, "GetVideoEncoderConfigurationOptions")) {
             snprintf(resp_body, sizeof(resp_body),
                 "%s<trt:GetVideoEncoderConfigurationOptionsResponse>"
@@ -1519,7 +2195,7 @@ static void *onvif_thread(void *arg) {
                     "%s<trt:GetVideoEncoderConfigurationResponse>"
                     "<trt:Configuration token=\"VEC_1\">"
                     "<tt:Name>VideoEncoderConfig_1</tt:Name><tt:UseCount>1</tt:UseCount>"
-                    "<tt:Encoding>H264</tt:Encoding>"
+                    "<tt:Encoding>%s</tt:Encoding>"
                     "<tt:Resolution><tt:Width>800</tt:Width><tt:Height>448</tt:Height></tt:Resolution>"
                     "<tt:Quality>5.0</tt:Quality>"
                     "<tt:RateControl><tt:FrameRateLimit>12</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval><tt:BitrateLimit>1024</tt:BitrateLimit></tt:RateControl>"
@@ -1527,13 +2203,13 @@ static void *onvif_thread(void *arg) {
                     "<tt:SessionTimeout>PT60S</tt:SessionTimeout>"
                     "</trt:Configuration>"
                     "</trt:GetVideoEncoderConfigurationResponse>%s",
-                    hdr, ftr);
+                    hdr, enc1, ftr);
             } else {
                 snprintf(resp_body, sizeof(resp_body),
                     "%s<trt:GetVideoEncoderConfigurationResponse>"
                     "<trt:Configuration token=\"VEC_0\">"
                     "<tt:Name>VideoEncoderConfig_0</tt:Name><tt:UseCount>1</tt:UseCount>"
-                    "<tt:Encoding>H264</tt:Encoding>"
+                    "<tt:Encoding>%s</tt:Encoding>"
                     "<tt:Resolution><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:Resolution>"
                     "<tt:Quality>5.0</tt:Quality>"
                     "<tt:RateControl><tt:FrameRateLimit>12</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval><tt:BitrateLimit>2048</tt:BitrateLimit></tt:RateControl>"
@@ -1541,7 +2217,7 @@ static void *onvif_thread(void *arg) {
                     "<tt:SessionTimeout>PT60S</tt:SessionTimeout>"
                     "</trt:Configuration>"
                     "</trt:GetVideoEncoderConfigurationResponse>%s",
-                    hdr, ftr);
+                    hdr, enc0, ftr);
             }
         } else if (strstr(buf, "GetNodes")) {
             snprintf(resp_body, sizeof(resp_body),
@@ -1736,10 +2412,15 @@ static void *onvif_thread(void *arg) {
         } else if (strstr(buf, "GetStatus")) {
             int cx = 1975, cy = 718;
             ptz_get_pos(&cx, &cy);
+            int inv_x = 0, inv_y = 0;
+            ptz_get_invert(&inv_x, &inv_y);
             float fx = (float)(cx - 1975) / 1975.0f;
             float fy = (float)(cy - 718) / 718.0f;
+            if (inv_x) fx = -fx;
+            if (inv_y) fy = -fy;
             time_t now = time(NULL);
-            struct tm *tm_utc = gmtime(&now);
+            struct tm tm_buf;
+            struct tm *tm_utc = gmtime_r(&now, &tm_buf);
             char tstr[32] = "2026-11-17T12:00:00Z";
             if (tm_utc) strftime(tstr, sizeof(tstr), "%Y-%m-%dT%H:%M:%SZ", tm_utc);
             snprintf(resp_body, sizeof(resp_body),
@@ -1791,6 +2472,10 @@ static void *onvif_thread(void *arg) {
         } else if (strstr(buf, "AbsoluteMove")) {
             float fx = 0, fy = 0;
             if (get_coord_attr(buf, 'x', &fx) && get_coord_attr(buf, 'y', &fy)) {
+                int inv_x = 0, inv_y = 0;
+                ptz_get_invert(&inv_x, &inv_y);
+                if (inv_x) fx = -fx;
+                if (inv_y) fy = -fy;
                 int target_x = 1975 + (int)(fx * 1975.0f);
                 int target_y = 718 + (int)(fy * 718.0f);
                 ptz_set_pos(target_x, target_y);
@@ -1803,24 +2488,36 @@ static void *onvif_thread(void *arg) {
                 "%s<tptz:StopResponse/>%s",
                 hdr, ftr);
         } else if (strstr(buf, "GetPresets")) {
+            char presets_xml[8192] = {0};
+            size_t poff = 0;
+            for (int pi = 1; pi <= 8; pi++) {
+                char ppath[64];
+                snprintf(ppath, sizeof(ppath), "/mnt/mtd/Config/preset_%d.txt", pi);
+                FILE *pf = fopen(ppath, "r");
+                int px = 1975, py = 718;
+                int found = 0;
+                if (pf) {
+                    if (fscanf(pf, "%d %d", &px, &py) == 2) found = 1;
+                    fclose(pf);
+                }
+                if (found || pi == 1) {
+                    int inv_x = 0, inv_y = 0;
+                    ptz_get_invert(&inv_x, &inv_y);
+                    float fx = (float)(px - 1975) / 1975.0f;
+                    float fy = (float)(py - 718) / 718.0f;
+                    if (inv_x) fx = -fx;
+                    if (inv_y) fy = -fy;
+                    int added = snprintf(presets_xml + poff, sizeof(presets_xml) - poff,
+                        "<tptz:Preset token=\"%d\"><tt:Name>Preset %d</tt:Name>"
+                        "<tt:PTZPosition><tt:PanTilt x=\"%.2f\" y=\"%.2f\" space=\"http://www.onvif.org/ver10/tptz/PanTiltSpaces/PositionGenericSpace\"/>"
+                        "<tt:Zoom x=\"0.0\" space=\"http://www.onvif.org/ver10/tptz/ZoomSpaces/PositionGenericSpace\"/></tt:PTZPosition></tptz:Preset>",
+                        pi, pi, fx, fy);
+                    if (added > 0 && poff + added < sizeof(presets_xml)) poff += added;
+                }
+            }
             snprintf(resp_body, sizeof(resp_body),
-                "%s<tptz:GetPresetsResponse>"
-                "<tptz:Preset token=\"1\">"
-                "<tt:Name>Preset 1</tt:Name>"
-                "<tt:PTZPosition>"
-                "<tt:PanTilt x=\"0.0\" y=\"0.0\" space=\"http://www.onvif.org/ver10/tptz/PanTiltSpaces/PositionGenericSpace\"/>"
-                "<tt:Zoom x=\"0.0\" space=\"http://www.onvif.org/ver10/tptz/ZoomSpaces/PositionGenericSpace\"/>"
-                "</tt:PTZPosition>"
-                "</tptz:Preset>"
-                "<tptz:Preset token=\"2\">"
-                "<tt:Name>Preset 2</tt:Name>"
-                "<tt:PTZPosition>"
-                "<tt:PanTilt x=\"0.2\" y=\"0.2\" space=\"http://www.onvif.org/ver10/tptz/PanTiltSpaces/PositionGenericSpace\"/>"
-                "<tt:Zoom x=\"0.0\" space=\"http://www.onvif.org/ver10/tptz/ZoomSpaces/PositionGenericSpace\"/>"
-                "</tt:PTZPosition>"
-                "</tptz:Preset>"
-                "</tptz:GetPresetsResponse>%s",
-                hdr, ftr);
+                "%s<tptz:GetPresetsResponse>%s</tptz:GetPresetsResponse>%s",
+                hdr, presets_xml, ftr);
         } else if (strstr(buf, "GotoPreset")) {
             int preset = 1;
             char *p = strstr(buf, "PresetToken>");
@@ -1829,21 +2526,40 @@ static void *onvif_thread(void *arg) {
                 while (*p && (*p < '0' || *p > '9')) p++;
                 if (*p) preset = atoi(p);
             }
-            if (preset == 1) ptz_set_pos(1975, 718);
-            else if (preset == 2) ptz_set_pos(2175, 818);
+            if (preset < 1 || preset > 16) preset = 1;
+            char ppath[64];
+            snprintf(ppath, sizeof(ppath), "/mnt/mtd/Config/preset_%d.txt", preset);
+            FILE *pf = fopen(ppath, "r");
+            if (pf) {
+                int px = 1975, py = 718;
+                if (fscanf(pf, "%d %d", &px, &py) == 2) ptz_set_pos(px, py);
+                fclose(pf);
+            } else if (preset == 1) {
+                ptz_set_pos(1975, 718);
+            }
             snprintf(resp_body, sizeof(resp_body),
                 "%s<tptz:GotoPresetResponse/>%s",
                 hdr, ftr);
         } else if (strstr(buf, "SetPreset")) {
+            int pnum = 1;
             char ptoken[32] = "1";
             char *p = strstr(buf, "PresetToken>");
             if (p) {
                 char *end = strchr(p + 12, '<');
-                if (end && end - (p + 12) < 30) {
+                if (end && end - (p + 12) < 30 && end - (p + 12) > 0) {
                     strncpy(ptoken, p + 12, end - (p + 12));
                     ptoken[end - (p + 12)] = '\0';
+                    int v = atoi(ptoken);
+                    if (v >= 1 && v <= 16) pnum = v;
                 }
             }
+            snprintf(ptoken, sizeof(ptoken), "%d", pnum);
+            int cx = 1975, cy = 718;
+            ptz_get_pos(&cx, &cy);
+            char ppath[64];
+            snprintf(ppath, sizeof(ppath), "/mnt/mtd/Config/preset_%d.txt", pnum);
+            FILE *pf = fopen(ppath, "w");
+            if (pf) { fprintf(pf, "%d %d\n", cx, cy); fclose(pf); }
             snprintf(resp_body, sizeof(resp_body),
                 "%s<tptz:SetPresetResponse><tptz:PresetToken>%s</tptz:PresetToken></tptz:SetPresetResponse>%s",
                 hdr, ptoken, ftr);
@@ -1868,15 +2584,17 @@ static void *onvif_thread(void *arg) {
                     hdr, ftr);
             }
         } else if (strstr(buf, "GetNetworkInterfaces")) {
+            char mac_str[32];
+            get_local_mac(mac_str, sizeof(mac_str));
             snprintf(resp_body, sizeof(resp_body),
                 "%s<tds:GetNetworkInterfacesResponse>"
                 "<tds:NetworkInterfaces token=\"eth2\">"
                 "<tt:Enabled>true</tt:Enabled>"
-                "<tt:Info><tt:Name>eth2</tt:Name><tt:HwAddress>00:12:34:56:78:9A</tt:HwAddress><tt:MTU>1500</tt:MTU></tt:Info>"
+                "<tt:Info><tt:Name>eth2</tt:Name><tt:HwAddress>%s</tt:HwAddress><tt:MTU>1500</tt:MTU></tt:Info>"
                 "<tt:IPv4><tt:Enabled>true</tt:Enabled><tt:Config><tt:Manual><tt:Address>%s</tt:Address><tt:PrefixLength>24</tt:PrefixLength></tt:Manual><tt:DHCP>true</tt:DHCP></tt:Config></tt:IPv4>"
                 "</tds:NetworkInterfaces>"
                 "</tds:GetNetworkInterfacesResponse>%s",
-                hdr, host_ip, ftr);
+                hdr, mac_str, host_ip, ftr);
         } else if (strstr(buf, "GetScopes")) {
             snprintf(resp_body, sizeof(resp_body),
                 "%s<tds:GetScopesResponse>"
@@ -1964,6 +2682,11 @@ static void *ws_discovery_thread(void *arg) {
                 }
             }
 
+            char cur_ip[32];
+            strncpy(cur_ip, my_ip, sizeof(cur_ip) - 1);
+            cur_ip[sizeof(cur_ip) - 1] = '\0';
+            get_local_ip(cur_ip, sizeof(cur_ip));
+
             char reply[2048];
             int rlen = snprintf(reply, sizeof(reply),
                 "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
@@ -1986,7 +2709,7 @@ static void *ws_discovery_thread(void *arg) {
                 "</d:ProbeMatches>"
                 "</SOAP-ENV:Body>"
                 "</SOAP-ENV:Envelope>",
-                msg_id, my_ip);
+                msg_id, cur_ip);
 
             sendto(fd, reply, rlen, 0, (struct sockaddr *)&from, flen);
         }
@@ -2115,7 +2838,17 @@ int main(int argc, char **argv) {
                 clients[i].client_rtp_port = 0;
                 clients[i].client_rtcp_port = 0;
                 clients[i].udp_rtp_fd = 0;
+                clients[i].udp_audio_rtp_fd = 0;
+                clients[i].video_setup = 0;
+                clients[i].audio_setup = 0;
+                clients[i].video_channel = 0;
+                clients[i].audio_channel = 2;
+                clients[i].client_audio_rtp_port = 0;
+                clients[i].client_audio_rtcp_port = 0;
                 clients[i].rtp_interleaved = 0;
+                clients[i].authenticated = 0;
+                clients[i].video_rtp_seq = 1000 + i * 10;
+                clients[i].audio_rtp_seq = 100 + i * 10;
                 inet_ntop(AF_INET, &caddr.sin_addr, clients[i].client_ip, sizeof(clients[i].client_ip));
                 break;
             }
