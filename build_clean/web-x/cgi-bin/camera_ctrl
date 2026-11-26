@@ -106,7 +106,7 @@ if [ "$CMD" = "get" ]; then
   "sharpness": 50,
   "flip": 0,
   "mirror": 0,
-  "anti_flicker": "50Hz",
+  "anti_flicker": "Off",
   "wdr": "Auto",
   "wdr_gain": 50,
   "hlc": 0,
@@ -302,7 +302,7 @@ read_cfg_val() {
 [ -z "$SHARPNESS" ] && SHARPNESS=50
 [ -z "$FLIP" ] && FLIP=0
 [ -z "$MIRROR" ] && MIRROR=0
-[ -z "$ANTI_FLICKER" ] && ANTI_FLICKER="50Hz"
+[ -z "$ANTI_FLICKER" ] && ANTI_FLICKER="Off"
 [ -z "$WDR" ] && WDR="Auto"
 [ -z "$WDR_GAIN" ] && WDR_GAIN=50
 [ -z "$HLC" ] && HLC=0
@@ -463,7 +463,7 @@ FLIP_HEX="0x00000000"
 MIRROR_HEX="0x00000000"
 [ "$MIRROR" = "1" ] || [ "$MIRROR" = "true" ] && MIRROR_HEX="0x00000001"
 
-AF_HEX="0x00000001"
+AF_HEX="0x00000000"
 case "$ANTI_FLICKER" in
     "Off"|"0") AF_HEX="0x00000000" ;;
     "50Hz"|"1") AF_HEX="0x00000001" ;;
@@ -495,8 +495,28 @@ WB_HEX="0x00000001"
 [ "$WHITE_BALANCE" = "Manual" ] && WB_HEX="0x00000002"
 
 WDR_AUTOGAIN=1
-[ "$WDR" = "Off" ] && WDR_AUTOGAIN=0
+WDR_EFF_GAIN=$WDR_GAIN
+if [ "$WDR" = "Off" ]; then
+    WDR_AUTOGAIN=0
+    WDR_EFF_GAIN=0
+elif [ "$WDR" = "Manual" ]; then
+    WDR_AUTOGAIN=0
+fi
 
+# App rejects AVEnc.VideoColor with Ret=606 if Brightness/Contrast/Saturation/Hue == 0 (valid: 1..100)
+clamp_1_100() {
+    _v=$1
+    [ -z "$_v" ] && _v=50
+    [ "$_v" -lt 1 ] 2>/dev/null && _v=1
+    [ "$_v" -gt 100 ] 2>/dev/null && _v=100
+    echo "$_v"
+}
+BRIGHTNESS=$(clamp_1_100 "$BRIGHTNESS")
+CONTRAST=$(clamp_1_100 "$CONTRAST")
+SATURATION=$(clamp_1_100 "$SATURATION")
+HUE=$(clamp_1_100 "$HUE")
+[ "$SHARPNESS" -lt 0 ] 2>/dev/null && SHARPNESS=0
+[ "$SHARPNESS" -gt 100 ] 2>/dev/null && SHARPNESS=100
 ACUTANCE=$((SHARPNESS * 75))
 
 CFG_BIN="/var/tmp/xm_setcfg"
@@ -507,11 +527,11 @@ if [ -x "$CFG_BIN" ]; then
     # 1. Apply VideoColor
     $CFG_BIN 1040 "{\"Name\":\"AVEnc.VideoColor\",\"AVEnc.VideoColor\":[[{\"Enable\":1,\"TimeSection\":\"1 00:00:00-24:00:00\",\"VideoColorParam\":{\"Acutance\":$ACUTANCE,\"Brightness\":$BRIGHTNESS,\"Contrast\":$CONTRAST,\"Gain\":0,\"Hue\":$HUE,\"Saturation\":$SATURATION,\"Whitebalance\":128}},{\"Enable\":0,\"TimeSection\":\"0 00:00:00-00:00:00\",\"VideoColorParam\":{\"Acutance\":$ACUTANCE,\"Brightness\":$BRIGHTNESS,\"Contrast\":$CONTRAST,\"Gain\":0,\"Hue\":$HUE,\"Saturation\":$SATURATION,\"Whitebalance\":128}}]]}" >/dev/null 2>&1
 
-    # 2. Apply Camera.Param (Flip, Mirror, DayNight, Denoise, AntiFlicker, Threshold)
-    $CFG_BIN 1040 "{\"Name\":\"Camera.Param\",\"Camera.Param\":[{\"AeSensitivity\":5,\"ApertureMode\":\"0x00000001\",\"BLCMode\":\"0x00000001\",\"DayNightColor\":\"$DN_VAL\",\"Day_nfLevel\":$DENOISE,\"DncThr\":$DNC_THRESHOLD,\"ElecLevel\":50,\"EsShutter\":\"0x00000000\",\"ExposureParam\":{\"LeastTime\":\"0x00000100\",\"Level\":0,\"MostTime\":\"0x00010000\"},\"GainParam\":{\"AutoGain\":1,\"Gain\":50},\"IRCUTMode\":1,\"InfraredSwap\":0,\"IrcutSwap\":0,\"Night_nfLevel\":$DENOISE,\"PictureFlip\":\"$FLIP_HEX\",\"PictureMirror\":\"$MIRROR_HEX\",\"RejectFlicker\":\"$AF_HEX\",\"WhiteBalance\":\"$WB_HEX\"}]}" >/dev/null 2>&1
+    # 2. Apply Camera.Param (Flip, Mirror, DayNight, Denoise, AntiFlicker, Threshold; disable BLC boost & 256us floor)
+    $CFG_BIN 1040 "{\"Name\":\"Camera.Param\",\"Camera.Param\":[{\"AeSensitivity\":5,\"ApertureMode\":\"0x00000000\",\"BLCMode\":\"0x00000000\",\"DayNightColor\":\"$DN_VAL\",\"Day_nfLevel\":$DENOISE,\"DncThr\":$DNC_THRESHOLD,\"ElecLevel\":50,\"EsShutter\":\"0x00000000\",\"ExposureParam\":{\"LeastTime\":\"0x00000010\",\"Level\":0,\"MostTime\":\"0x00010000\"},\"GainParam\":{\"AutoGain\":1,\"Gain\":50},\"IRCUTMode\":1,\"InfraredSwap\":0,\"IrcutSwap\":0,\"Night_nfLevel\":$DENOISE,\"PictureFlip\":\"$FLIP_HEX\",\"PictureMirror\":\"$MIRROR_HEX\",\"RejectFlicker\":\"$AF_HEX\",\"WhiteBalance\":\"$WB_HEX\"}]}" >/dev/null 2>&1
 
-    # 3. Apply Camera.ParamEx (WDR, Style, HLC)
-    $CFG_BIN 1040 "{\"Name\":\"Camera.ParamEx\",\"Camera.ParamEx\":[{\"BroadTrends\":{\"AutoGain\":$WDR_AUTOGAIN,\"Gain\":$WDR_GAIN},\"LightRestrainLevel\":$HLC,\"Style\":\"$STYLE\"}]}" >/dev/null 2>&1
+    # 3. Apply Camera.ParamEx (WDR, Style, HLC, PreventOverExpo)
+    $CFG_BIN 1040 "{\"Name\":\"Camera.ParamEx\",\"Camera.ParamEx\":[{\"BroadTrends\":{\"AutoGain\":$WDR_AUTOGAIN,\"Gain\":$WDR_EFF_GAIN},\"LightRestrainLevel\":$HLC,\"LowLuxMode\":0,\"PreventOverExpo\":1,\"Style\":\"$STYLE\"}]}" >/dev/null 2>&1
 
     # 4. Apply Camera.WhiteLight (LED Spotlight)
     $CFG_BIN 1040 "{\"Name\":\"Camera.WhiteLight\",\"Camera.WhiteLight\":{\"Brightness\":$WHITELIGHT_BRIGHTNESS,\"MoveTrigLight\":{\"Duration\":$WHITELIGHT_DURATION,\"Level\":3},\"WorkMode\":\"$WHITELIGHT_MODE\"}}" >/dev/null 2>&1

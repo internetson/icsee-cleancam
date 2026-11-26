@@ -472,7 +472,7 @@
                                     <span data-i18n="lbl_brightness">Яркость (Brightness):</span>
                                     <strong id="val-brightness">50</strong>
                                 </div>
-                                <input type="range" id="set-brightness" min="0" max="100" value="50" oninput="document.getElementById('val-brightness').innerText = this.value">
+                                <input type="range" id="set-brightness" min="1" max="100" value="50" oninput="document.getElementById('val-brightness').innerText = this.value">
                             </div>
 
                             <div class="slider-row">
@@ -480,7 +480,7 @@
                                     <span data-i18n="lbl_contrast">Контрастность (Contrast):</span>
                                     <strong id="val-contrast">50</strong>
                                 </div>
-                                <input type="range" id="set-contrast" min="0" max="100" value="50" oninput="document.getElementById('val-contrast').innerText = this.value">
+                                <input type="range" id="set-contrast" min="1" max="100" value="50" oninput="document.getElementById('val-contrast').innerText = this.value">
                             </div>
 
                             <div class="slider-row">
@@ -488,7 +488,7 @@
                                     <span data-i18n="lbl_saturation">Насыщенность (Saturation):</span>
                                     <strong id="val-saturation">50</strong>
                                 </div>
-                                <input type="range" id="set-saturation" min="0" max="100" value="50" oninput="document.getElementById('val-saturation').innerText = this.value">
+                                <input type="range" id="set-saturation" min="1" max="100" value="50" oninput="document.getElementById('val-saturation').innerText = this.value">
                             </div>
 
                             <div class="slider-row">
@@ -496,7 +496,7 @@
                                     <span data-i18n="lbl_hue">Оттенок (Hue):</span>
                                     <strong id="val-hue">50</strong>
                                 </div>
-                                <input type="range" id="set-hue" min="0" max="100" value="50" oninput="document.getElementById('val-hue').innerText = this.value">
+                                <input type="range" id="set-hue" min="1" max="100" value="50" oninput="document.getElementById('val-hue').innerText = this.value">
                             </div>
 
                             <div class="slider-row">
@@ -520,9 +520,9 @@
                             <div class="form-group">
                                 <label class="form-label" data-i18n="lbl_anti_flicker">Антимерцание (Anti-Flicker):</label>
                                 <select id="set-anti-flicker" class="form-select">
-                                    <option value="50Hz" selected data-i18n="opt_50hz">50 Hz (Россия / Европа)</option>
+                                    <option value="Off" selected data-i18n="opt_off">Выключено (Off)</option>
+                                    <option value="50Hz" data-i18n="opt_50hz">50 Hz (Россия / Европа)</option>
                                     <option value="60Hz" data-i18n="opt_60hz">60 Hz (США / Азия)</option>
-                                    <option value="Off" data-i18n="opt_off">Выключено (Off)</option>
                                 </select>
                             </div>
 
@@ -3213,10 +3213,10 @@
                 .then(r => r.json())
                 .then(cfg => {
                     // Sensor & Color
-                    if (cfg.brightness !== undefined) { document.getElementById("set-brightness").value = cfg.brightness; document.getElementById("val-brightness").innerText = cfg.brightness; }
-                    if (cfg.contrast !== undefined) { document.getElementById("set-contrast").value = cfg.contrast; document.getElementById("val-contrast").innerText = cfg.contrast; }
-                    if (cfg.saturation !== undefined) { document.getElementById("set-saturation").value = cfg.saturation; document.getElementById("val-saturation").innerText = cfg.saturation; }
-                    if (cfg.hue !== undefined) { document.getElementById("set-hue").value = cfg.hue; document.getElementById("val-hue").innerText = cfg.hue; }
+                    if (cfg.brightness !== undefined) { const v = Math.max(1, cfg.brightness); document.getElementById("set-brightness").value = v; document.getElementById("val-brightness").innerText = v; }
+                    if (cfg.contrast !== undefined) { const v = Math.max(1, cfg.contrast); document.getElementById("set-contrast").value = v; document.getElementById("val-contrast").innerText = v; }
+                    if (cfg.saturation !== undefined) { const v = Math.max(1, cfg.saturation); document.getElementById("set-saturation").value = v; document.getElementById("val-saturation").innerText = v; }
+                    if (cfg.hue !== undefined) { const v = Math.max(1, cfg.hue); document.getElementById("set-hue").value = v; document.getElementById("val-hue").innerText = v; }
                     if (cfg.sharpness !== undefined) { document.getElementById("set-sharpness").value = cfg.sharpness; document.getElementById("val-sharpness").innerText = cfg.sharpness; }
                     if (cfg.wdr_gain !== undefined) { document.getElementById("set-wdr-gain").value = cfg.wdr_gain; document.getElementById("val-wdr-gain").innerText = cfg.wdr_gain; }
                     if (cfg.anti_flicker) document.getElementById("set-anti-flicker").value = cfg.anti_flicker;
